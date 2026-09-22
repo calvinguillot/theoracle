@@ -131,7 +131,8 @@ Four recordings exist, and routing is by the language Whisper detected:
 | --- | --- | --- |
 | Finnish | `origin_fi_female.wav` or `origin_fi_male.wav` | Random, chosen once per visit and remembered |
 | Spanish | `origin_es.wav` | |
-| English, or anything else | `origin_en.wav` | Includes Swedish — a deliberate gap worth revisiting |
+| English | `origin_en.wav` | |
+| Any of the other seven | Nothing — `origin.md` loads and the Oracle answers live, in their language | Shorter than the recording, and stays in-language |
 
 ```yaml
 prerendered:
@@ -142,9 +143,9 @@ prerendered:
     default: [origin_en.wav]
 ```
 
-Adding a language is one line: record `origin_sv.wav`, add `sv: [origin_sv.wav]`. A list with more than one entry is chosen from at random, so any language can have several voices.
+Adding a recording is one line: make `origin_sv.wav`, add `sv: [origin_sv.wav]`. A list with more than one entry is chosen from at random, so any language can have several voices.
 
-**Two consequences to decide rather than inherit.** Swedish is one of the three main languages and currently gets the English recording. And a Finnish visitor may hear the origin in one voice and the rest of the visit in the single live Piper Finnish voice — possibly the other sex. The world absorbs this well (the Oracle holds everyone who went inside the collective; it would be stranger with only one voice), and `instructions.md` tells the model never to remark on it. But listen to both combinations in the room before settling it.
+**One consequence to decide rather than inherit.** A Finnish visitor may hear the origin in one voice and the rest of the visit in the single live Piper Finnish voice — possibly the other sex. The world absorbs this well (the Oracle holds everyone who went inside the collective; it would be stranger with only one voice), and `instructions.md` tells the model never to remark on it. But listen to both combinations in the room before settling it.
 
 **The recording is canonical.** `origin.md` and `world.md` have been aligned to its dates, figures and wording — 2090 for the law, 97% by 2120, the sign, the radio signal, the scraps — so a follow-up answer never contradicts what the visitor just heard. If the script changes, re-record and re-align.
 
@@ -417,25 +418,36 @@ Yes — and the detection side needs no work at all. Passing `language=None` alr
 
 **The constraint is Piper, not Whisper.** Piper has voices for about 48 languages, so the real question is which ones you install. Notably for Helsinki: **Estonian (`et`) has a voice** — worth having, since Whisper confuses Estonian with Finnish on short utterances anyway, and having a real Estonian reply turns that failure mode into a feature. **Somali has no Piper voice**, which is a genuine gap given who lives in this city, and one worth knowing rather than discovering.
 
-Run three tiers:
+Ten languages, one voice each: Finnish, Swedish, English, Spanish, German, Estonian, Italian, Portuguese, Japanese and Chinese. The full table is in the README. Three things follow from that list.
 
-| Tier | Languages | What you commit to |
+**Only three have a recorded origin narration** — Finnish, Spanish, English. For the other seven, the engine falls back to loading `origin.md` and answering live, in the visitor's language. That is the better trade: a Japanese visitor asking what the Oracle is would otherwise hear two minutes of English and then resume in Japanese, which jars more than losing the canonical text. It also closes the Swedish gap noted earlier.
+
+**The hard rule stays:** `response_language` is only ever a language with an installed voice. Whisper will happily detect Polish; the Oracle will answer in the default language rather than feed Polish text to a voice that cannot say it.
+
+**`de_DE-thorsten-high` is the odd one out** — the only `high` quality voice in the set, roughly twice the synthesis time of a `medium`. Still sub-second for a short reply, but it makes German answers measurably slower, and the ten voices are not level-matched with each other. Audition them as a set on the mixer, not one at a time.
+
+### Changing language mid-visit
+
+The interesting failure here is not a visitor deliberately switching — it is **accidental flipping**. Language detection is least reliable on short utterances, and short utterances are the most common thing a visitor says. A Finn saying "okay", "mm", or their own name is frequently detected as English. Detect per turn with no guard, and the Oracle answers the rest of the visit in the wrong language because someone agreed with it.
+
+So the visit's language is **sticky**, with a higher bar to change it than to set it:
+
+| Rule | Value | Why |
 | --- | --- | --- |
-| 1 | `fi`, `sv`, `en`, `es` | Voices auditioned, prompts tested, replies checked by a native speaker. Always resident in RAM. Spanish joins tier 1 because it has its own origin recording |
-| 2 | \~6 more, e.g. `et`, `ru`, `de`, `fr`, `it`, `ar` | Voice installed and working, lightly tested. Lazy-loaded on first use |
-| 3 | Everything else Whisper detects | No voice — reply in the default language |
+| First confident detection sets the language | `min_confidence` 0.5 | Normal gate |
+| Changing it needs more certainty | `switch_confidence` 0.75 | A switch is a bigger claim than an initial guess |
+| Short utterances never switch | `switch_min_words` 3, `switch_min_speech_s` 1.5 | Exactly where detection is unreliable |
+| A language with no voice never wins | — | The engine cannot speak it |
 
-Pick tier 2 for your audience rather than by model quality. In a Helsinki gallery, Estonian, Russian and Ukrainian will show up more than Japanese.
+A visitor who genuinely switches produces a whole sentence in the new language and is followed at once. A visitor who says "joo" is not. `language_lock: per_turn` restores naive behaviour for testing; `fixed` pins the visit to one language, which is worth having for an opening night.
 
-**The hard rule:** `response_language` is only ever a language you have a voice for. Never feed Finnish text to an English voice — it produces something between comedy and nonsense. Transcription coverage and speech coverage are separate constraints and the code must treat them that way.
-
-For tier 3, the visitor spoke something real and deserves an answer. Reply in Finnish or English rather than silence. This is also a nice artistic opening if you want it: a piece that can hear a language it cannot yet speak, and says so, is more interesting than one that pretends not to have heard.
+Two consequences worth designing around. **Write the fate sheet in English regardless of the spoken language** — it is internal, never spoken, and keeping it in one language means a mid-visit switch does not leave half the established facts in Finnish and half in Japanese. And **record the languages used in `history/`**, since a rise in switches is the signal that the thresholds need tuning.
 
 ### Memory and confidence at ten languages
 
-Each Piper voice is roughly 60–110 MB of RAM and no VRAM, so ten resident voices cost around 1 GB. That fits in 16 GB alongside TouchDesigner, but there is no reason to pay it: keep tier 1 loaded permanently and lazy-load tier 2 on first use. A 200–400 ms load on a rare language is invisible inside a 4–6 second response, and it happens once per session.
+Each Piper voice is roughly 60–110 MB of RAM and no VRAM, so ten resident voices cost around 1 GB. That fits in 16 GB alongside TouchDesigner, but there is no reason to pay it: keep the languages you expect daily — Finnish, Swedish, English — loaded permanently, and lazy-load the rest on first use. A 200–400 ms load on a rare language is invisible inside a 4–6 second response, and it happens once per session.
 
-More languages does mean more chances to mis-detect. Set `allowed_languages` to exactly your installed set and pick the highest-scoring **allowed** language rather than Whisper's raw top guess — that alone removes the Estonian/Finnish and Danish/Norwegian confusions from tier 1, because the wrong answer is often not in your list. Keep the confidence gate at 0.5 and let anything below it fall to the default language.
+More languages does mean more chances to mis-detect. Set `allowed_languages` to exactly your installed set and pick the highest-scoring **allowed** language rather than Whisper's raw top guess — that alone removes the Danish/Norwegian confusion, because the wrong answer is not in your list. Estonian is in your list, so Finnish/Estonian confusion is now a real possibility — which the sticky-language rule above handles, since it only bites on short utterances. Keep the confidence gate at 0.5 and let anything below it fall to the default language.
 
 ## Stage 3 — LLM layer
 
@@ -974,16 +986,16 @@ print(sys.version)      # pin requires-python to this exact minor version
 Then, in a Git Bash shell (`"C:\Program Files\Git\bin\bash.exe" --login -i`), from the repo root at /c/theoracle:
 
 ```bash
-export UV_PYTHON="/c/Program Files/Derivative/TouchDesigner/bin/python.exe"
+export TD_PYTHON="C:/Program Files/Derivative/TouchDesigner/bin/python.exe"
 export UV_PYTHON_DOWNLOADS=never     # stops uv quietly fetching its own Python
-echo $UV_PYTHON
+unset UV_PYTHON
 
-uv venv
-source .venv/Scripts/activate
-uv sync
+uv venv --python "$TD_PYTHON" && source .venv/Scripts/activate && uv sync
 ```
 
 `UV_PYTHON_DOWNLOADS=never` is the line I'd add to your notes. Without it, if the path is wrong or the version constraint does not match, uv silently downloads its own CPython and builds a venv TD cannot use. You then spend an hour debugging imports that work in the terminal and fail in TD.
+
+**Pass the interpreter to `uv venv` directly — do not export it as `UV_PYTHON`.** This was an error in an earlier draft of this document, found in practice. `UV_PYTHON` is read by *every* uv command, and `uv pip` treats it as the environment to install **into**, overriding the activated `.venv`. Set globally, it points `uv pip install` at TouchDesigner's own `site-packages`; the only thing that stopped it was Windows refusing to write to Program Files. Never run the shell as administrator to get past that error. Keeping the path in a differently named variable (`TD_PYTHON`) that only `uv venv --python` reads makes TouchDesigner's folder unreachable by construction.
 
 ### pyproject.toml
 
@@ -995,6 +1007,10 @@ requires-python = "==3.11.*"        # match TD exactly
 dependencies = [
   "piper-tts>=1.3",
   "ollama>=0.6",
+  "python-dotenv>=1.0",
+  "faster-whisper",
+  "nvidia-cublas-cu12",
+  "nvidia-cudnn-cu12",
   "sounddevice>=0.4.6",
   "websockets>=12",
   "python-osc>=1.8",
@@ -1009,20 +1025,20 @@ python-downloads = "never"
 
 ### faster-whisper and the CUDA libraries
 
-This is why you reach for pip, and it is worth documenting rather than rediscovering. Current `ctranslate2` needs **CUDA 12 with cuDNN 9**, and on Windows those DLLs are not bundled. Two ways through:
+Current `ctranslate2` needs **CUDA 12 with cuDNN 9**, and on Windows those DLLs are not bundled. Two ways through:
 
 | Approach | How | Note |
 | --- | --- | --- |
 | DLLs on PATH | Take the NVIDIA libraries from Purfview's `whisper-standalone-win` release and put them on PATH | What the faster-whisper README recommends for Windows |
-| pip NVIDIA packages | `uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` | Keeps everything inside the venv; larger install |
+| NVIDIA packages in the venv | `uv add faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12` | Keeps everything inside `.venv` and in the lockfile; add their `bin` folders to PATH in `run.bat` |
 
-If you hit the cuDNN 8 version of this problem, `uv pip install --force-reinstall ctranslate2==4.4.0` pins back to the older pairing. [faster-whisper README](https://github.com/SYSTRAN/faster-whisper)
+If you hit the cuDNN 8 version of this problem, `uv add "ctranslate2==4.4.0"` pins back to the older pairing. [faster-whisper README](https://github.com/SYSTRAN/faster-whisper)
 
-**Record whatever you install this way.** `uv add` writes to `pyproject.toml` and the lockfile; `uv pip install` does not. Anything installed with `uv pip` is invisible to `uv sync`, so the show machine will not reproduce it. Keep a `requirements-gpu.txt` with those exact commands and a comment saying why, or you will rebuild the environment three weeks from now and lose an evening.
+**Use `uv add`, never `uv pip install`.** `uv add` writes to `pyproject.toml` and the lockfile. `uv pip install` does not — and `uv sync` is exact by default, so it *removes* anything the lockfile does not list. A package installed with `uv pip` vanishes the next time anyone syncs. An earlier draft of this document recommended `uv pip` for faster-whisper; that was wrong.
 
 ### Getting the venv into TouchDesigner
 
-Recent builds ship an official palette component, **tdPyEnvManager**, which adds an external environment to TD's Python path and can activate it automatically at startup. It reads a `TDPyEnvManagerContext.yaml` or a `pyproject.toml` section, so it fits your uv setup directly. It requires the venv's Python version to match TD's — which is exactly what the `UV_PYTHON` step guarantees. [tdPyEnvManager](https://derivative.ca/UserGuide/Palette:tdPyEnvManager)
+Recent builds ship an official palette component, **tdPyEnvManager**, which adds an external environment to TD's Python path and can activate it automatically at startup. It reads a `TDPyEnvManagerContext.yaml` or a `pyproject.toml` section, so it fits your uv setup directly. It requires the venv's Python version to match TD's — which is exactly what `uv venv --python "$TD_PYTHON"` guarantees. [tdPyEnvManager](https://derivative.ca/UserGuide/Palette:tdPyEnvManager)
 
 Prefer it over hand-appending to `sys.path` in an execute DAT: it survives project saves, it is visible in the palette rather than buried in a script, and whoever reopens this file in two years can see what it depends on.
 
@@ -1070,7 +1086,7 @@ TD textport:
 
 ```python
 import sys, numpy
-print(sys.executable)        # -> UV_PYTHON
+print(sys.executable)        # -> TD_PYTHON
 print(sys.version)           # -> requires-python
 print(numpy.__version__)     # -> the NumPy pin
 ```
@@ -1124,8 +1140,10 @@ And the shell helper, so you stop retyping the exports:
 
 ```bash
 cat > scripts/setup-shell.sh <<'EOF'
-export UV_PYTHON="/c/Program Files/Derivative/TouchDesigner/bin/python.exe"
+export PATH="$HOME/.local/bin:$PATH"
+export TD_PYTHON="C:/Program Files/Derivative/TouchDesigner/bin/python.exe"
 export UV_PYTHON_DOWNLOADS=never
+unset UV_PYTHON        # never set it: uv pip would install into TouchDesigner
 EOF
 ```
 
@@ -1161,16 +1179,14 @@ Git Bash, in `/c/theoracle`:
 
 ```bash
 source scripts/setup-shell.sh
-echo $UV_PYTHON                      # confirm it printed
+"$TD_PYTHON" --version              # must match Step 2
 
-uv venv
-source .venv/Scripts/activate
-uv sync
+uv venv --python "$TD_PYTHON" && source .venv/Scripts/activate && uv sync
 
 python -c "import sys; print(sys.version)"
 ```
 
-**Hard stop:** that last line must print the same version as step 2. If it differs, uv built the venv on its own Python — `rm -rf .venv`, fix `UV_PYTHON`, start the step again. Do not continue past a mismatch; everything downstream will work in the terminal and fail in TouchDesigner.
+**Hard stop:** that last line must print the same version as step 2. If it differs, uv built the venv on its own Python — `rm -rf .venv`, fix `TD_PYTHON` in `setup-shell.sh`, start the step again. Do not continue past a mismatch; everything downstream will work in the terminal and fail in TouchDesigner.
 
 `.venv` lands at `C:\theoracle\.venv`, which is the path tdPyEnvManager wants in step 9.
 
@@ -1179,8 +1195,8 @@ python -c "import sys; print(sys.version)"
 Same shell, venv active:
 
 ```bash
-uv pip install faster-whisper
-uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+uv add faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12
+python -c "import faster_whisper, sys; print(sys.prefix)"   # must end in .venv
 ```
 
 **Check this in isolation before writing any engine code** — it is the step that fails:
@@ -1189,11 +1205,11 @@ uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3-turbo', device='cuda', compute_type='int8'); print('loaded ok')"
 ```
 
-A `cudnn64_9.dll` or `cublas64_12.dll` error means the DLLs are not on PATH — add the venv's `nvidia` package directories to PATH in `run.bat`, or use Purfview's `whisper-standalone-win` library archive instead. On cuDNN 8, pin back with `uv pip install --force-reinstall ctranslate2==4.4.0`.
+A `cudnn64_9.dll` or `cublas64_12.dll` error means the DLLs are not on PATH — add the venv's `nvidia` package directories to PATH in `run.bat`, or use Purfview's `whisper-standalone-win` library archive instead. On cuDNN 8, pin back with `uv add "ctranslate2==4.4.0"`.
 
 The first run downloads \~1.6 GB to the Hugging Face cache. Do this on your own network, not the gallery's.
 
-Record both `uv pip` lines in `scripts/requirements-gpu.txt` with a comment saying why. They are invisible to `uv sync`, so the show machine will not reproduce them otherwise.
+`uv add`, not `uv pip install`: the packages land in `pyproject.toml` and the lockfile, so `uv sync` keeps them instead of removing them, and a new machine reproduces them. If the first line of uv's output ever names `C:\Program Files\Derivative\TouchDesigner`, stop and `unset UV_PYTHON` — and never run as administrator to get past "Access is denied".
 
 ### Step 7 — Ollama and qwen3.5:4b
 
@@ -1217,10 +1233,10 @@ Read that Finnish reply carefully. If it sounds translated rather than written, 
 Git Bash, in `/c/theoracle`, venv active:
 
 ```bash
-uv pip install piper-tts
 python -m piper.download_voices fi_FI-harri-medium --data-dir voices
-python -m piper.download_voices sv_SE-nst-medium  --data-dir voices
-python -m piper.download_voices en_GB-alba-medium --data-dir voices
+python -m piper.download_voices sv_SE-alma-medium  --data-dir voices
+python -m piper.download_voices en_GB-alba-medium  --data-dir voices
+# ...and the other seven - see the README's Languages table
 ls -la voices/
 ```
 
@@ -1302,13 +1318,12 @@ C:\theoracle\
   stories/
     instructions.md  world.md  stories.md
   voices/
-    fi_FI-harri-medium.onnx (+ .json)
-    sv_SE-nst-medium.onnx   (+ .json)
-    en_GB-alba-medium.onnx  (+ .json)
+    fi_FI-harri-medium.onnx (+ .json)   # ten voices, one per language
+    sv_SE-alma-medium.onnx  (+ .json)
+    en_GB-alba-medium.onnx  (+ .json)   # ...and seven more
   scripts/
-    setup-shell.sh         # the UV_PYTHON exports
+    setup-shell.sh         # TD_PYTHON + PATH; source it in every new terminal
     check_env.py           # the diagnostic from the runbook
-    requirements-gpu.txt   # what uv pip installed, and why
   td/
     theoracle.toe
     scripts/ws_callbacks.py
@@ -1339,7 +1354,11 @@ stt:
   device: cuda                 # cuda | cpu  (Plan B)
   compute_type: int8           # settled - keeps the 3 GB reserve
   min_confidence: 0.5
-  allowed_languages: [fi, sv, en, es]   # grow to ~10; add only once each voice is installed
+  allowed_languages: [fi, sv, en, es, de, et, it, pt, ja, zh]
+  language_lock: sticky        # sticky | per_turn | fixed
+  switch_confidence: 0.75
+  switch_min_words: 3
+  switch_min_speech_s: 1.5
   default_language: fi
 llm:
   host: http://localhost:11434
@@ -1375,7 +1394,10 @@ conversation:
   end_on_sensor_clear_s: 5
   context_turns: 6
 tts:
-  voices: {fi: fi_FI-harri-medium, sv: sv_SE-nst-medium, en: en_GB-alba-medium, es: <from voice list>}
+  voices: {fi: fi_FI-harri-medium, sv: sv_SE-alma-medium, en: en_GB-alba-medium,
+           es: es_MX-ald-medium, de: de_DE-thorsten-high, et: et_EE-news-medium,
+           it: it_IT-paola-medium, pt: pt_BR-cadu-medium,
+           ja: ja_JP-hi_fi_captain-medium, zh: zh_CN-huayan-medium}
   length_scale: 1.0
   output_dir: runtime/audio
   max_duration_s: 45
@@ -1461,7 +1483,8 @@ Then a **soak test**: four hours, triggering every 30 seconds, with the real vis
 | Web search — the visitor | On, explicit spoken consent | Their data, their choice, with a category screen on results |
 | Web search — third parties | Off, in code | They are not in the room and cannot consent |
 | Voice output | HDMI, centre screen | One playback path, so no echo; latency is irrelevant at this scale |
-| Origin story, first ask | Recording: fi (random of two voices), es, en for everything else | Canonical, instant, free |
+| Origin story, first ask | Recording for fi (random of two), es, en; generated live in the other seven | Canonical where recorded, in-language everywhere |
+| Language mid-visit | Sticky, with a higher bar to switch than to set | Stops a "joo" flipping the whole visit to English |
 | Origin story, follow-ups | Conditional prompt load of `origin.md` | Pacing first, token budget second |
 | Readings | Answer the question asked, as prophecy from the archive | Versatile in what, consistent in how |
 | Consistency within a visit | Fate sheet, re-injected as `<established>` | Several questions, one life |
@@ -1476,7 +1499,6 @@ Then a **soak test**: four hours, triggering every 30 seconds, with the real vis
 | --- | --- | --- |
 | Barge-in during speech | Ignore / cancel-and-restart | Ignore, with cooldown — crowds make cancel chaotic |
 | Corpus scale | One file / many tagged files | Start with one; add selection only when it stops fitting |
-| Tier 2 languages | Which six, to reach ten | Estonian and Russian first, for this city |
 | Swedish origin recording | Record one / keep English | Record one — Swedish is a main language and currently hears English |
 | Finnish origin voices | Random of two / match the live voice | Listen in the room; random suits the lore, matching sounds like one speaker |
 | Languages on signage | — | If the sign says "speak to it", visitors will try languages you have no voice for. Worth deciding what happens then |
@@ -1487,7 +1509,6 @@ Then a **soak test**: four hours, triggering every 30 seconds, with the real vis
 The hardware questions are answered — HC-SR04 over serial, a light scene with a 3 GB reserve, four surrounds plus a centre screen, close-talked mic on a stand, a quiet bed. What is left is all writing and measurement:
 
 1. **The story Markdown.** This is now the critical path. Everything else has a known shape; the writing does not, and it is the part that decides whether the piece is any good. Tier 1 languages need a native speaker to read the output, not just a translation.
-2. **Which tier 2 languages**, so voices can be downloaded and committed rather than fetched on show day.
 3. **TouchDesigner's exact Python version**, from `sys.version` in the textport — it sets `requires-python` and the NumPy pin before anything gets installed.
 
 None of them block Phase A, which is cabling and mixer routing, or Phase 0, which needs no models. Start there while the writing happens in parallel.

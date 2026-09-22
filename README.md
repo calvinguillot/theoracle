@@ -29,6 +29,7 @@ an API key.
   - [Step 12 — Run it](#step-12--run-it)
 - [Audio hardware](#audio-hardware)
 - [The story material](#the-story-material)
+- [Languages](#languages)
 - [How a visit is stored](#how-a-visit-is-stored)
 - [Configuration reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
@@ -222,6 +223,19 @@ uv --version
 git --version
 ```
 
+**Then check the same thing in Git Bash**, because most of this guide runs there and it keeps its
+own copy of the PATH:
+
+```bash
+uv --version
+```
+
+If Git Bash says `uv: command not found` while PowerShell finds it, Git Bash was started before uv
+was installed and is still using the old PATH. **Close every Git Bash window** — and if you opened
+it inside VS Code or Windows Terminal, quit that program completely, since child terminals inherit
+its PATH — then open a fresh one. The PATH line in `scripts/setup-shell.sh` (Step 5) also covers
+this permanently.
+
 ---
 
 ### Step 2 — Install Ollama and the language model
@@ -365,14 +379,14 @@ That is a reasonable trade for what it gives the piece, but it means "fully offl
 true once this is on. Decide it deliberately, and if the installation has signage, it belongs
 there.
 
-#### 3a. Install the packages
+#### 3a. The packages
 
-**Git Bash**, in `/c/theoracle` — or PowerShell if you have not created the project yet; you can
-also fold these into step 6 and run them with `uv pip install`:
+Web search needs two Python packages: `ollama` (0.6.0 or newer) and `python-dotenv`. **Do not
+install them now.** Both are listed in `pyproject.toml` (Step 6) and are installed into the
+project's own environment in Step 7. Installing them here, before that environment exists, puts
+them in whatever Python happens to be on your PATH, where the project will never see them.
 
-```bash
-python -m pip install --upgrade "ollama>=0.6.0" python-dotenv
-```
+For now, just store the key (3b). You run the test in 3c after Step 7.
 
 #### 3b. Store your API key
 
@@ -399,7 +413,7 @@ OLLAMA_API_KEY=
 EOF
 ```
 
-#### 3c. Test it
+#### 3c. Test it — after Step 7
 
 Create `scripts/ollamaweb.py`:
 
@@ -420,7 +434,7 @@ for result in response.results:
     print()
 ```
 
-Run it:
+Run it once Step 7 is done, with the environment active:
 
 ```bash
 python scripts/ollamaweb.py
@@ -553,13 +567,24 @@ open a new terminal:
 
 ```bash
 cat > scripts/setup-shell.sh <<'EOF'
-export UV_PYTHON="/c/Program Files/Derivative/TouchDesigner/bin/python.exe"
+# uv's install folder - Git Bash does not always pick it up from Windows
+export PATH="$HOME/.local/bin:$PATH"
+
+# TouchDesigner's Python. Used ONCE, to create .venv - see Step 7.
+export TD_PYTHON="C:/Program Files/Derivative/TouchDesigner/bin/python.exe"
+
+# Never let uv download its own Python.
 export UV_PYTHON_DOWNLOADS=never
+
+# Never set UV_PYTHON. `uv pip` treats it as the place to install INTO,
+# overriding the active .venv - it would try to install into TouchDesigner itself.
+unset UV_PYTHON
 EOF
 ```
 
-**Edit that path** if step 3 printed something different. Note the format: forward slashes, and
-`/c/` instead of `C:\`. That is Git Bash's way of writing Windows paths.
+**Edit that path** to exactly what TouchDesigner printed in Step 4 — TouchDesigner shows it as
+`C:/Program Files/...` with forward slashes, and that form works as-is in both Git Bash and uv. Keep
+the double quotes: the path contains a space.
 
 ---
 
@@ -575,6 +600,7 @@ requires-python = "==3.11.*"
 dependencies = [
   "piper-tts>=1.3",
   "ollama>=0.6",
+  "python-dotenv>=1.0",
   "sounddevice>=0.4.6",
   "websockets>=12",
   "python-osc>=1.8",
@@ -597,21 +623,35 @@ python-downloads = "never"
 
 ### Step 7 — Create the Python environment
 
-**Git Bash**, in `/c/theoracle`:
+> **Every new terminal starts blank.** Opening a fresh Git Bash forgets everything from the last
+> one, so `source scripts/setup-shell.sh` is always the first command, before any `uv` command.
+> Skipping it produces a confusing error — see the end of this step.
+
+**Git Bash**, in your repository folder:
 
 ```bash
 source scripts/setup-shell.sh
-echo $UV_PYTHON
+echo "$TD_PYTHON"
+"$TD_PYTHON" --version
 ```
 
-That should print TouchDesigner's Python path. If it prints nothing, the helper script was not
-found — check you are in `/c/theoracle`.
+The first line should print TouchDesigner's Python path, and the second its version — the same
+version TouchDesigner printed in Step 4. If `echo` prints nothing, the helper script was not
+found: check you are in the repository folder. If the version line fails, the path in
+`setup-shell.sh` is wrong: copy it again from TouchDesigner's textport (Step 4).
+
+Then create the environment, pointing uv at that interpreter explicitly:
 
 ```bash
-uv venv
-source .venv/Scripts/activate
-uv sync
+uv venv --python "$TD_PYTHON" && source .venv/Scripts/activate && uv sync
 ```
+
+This is the **only** command that is told about TouchDesigner's Python. From here on, every `uv`
+command works on `.venv` — which is a copy built from TouchDesigner's interpreter, sitting in your
+repository, that you are free to install into. TouchDesigner's own folder is never written to.
+
+The `&&` matters: each command runs only if the one before it succeeded, so a failure stops the
+chain instead of producing three errors that hide the real one.
 
 Now the **most important check in this guide**:
 
@@ -619,10 +659,10 @@ Now the **most important check in this guide**:
 python -c "import sys; print(sys.version)"
 ```
 
-**This must print the same version TouchDesigner printed in step 4.**
+**This must print the same version TouchDesigner printed in Step 4.**
 
-If it does not, uv built the environment on a different Python — usually because the path in
-`setup-shell.sh` is wrong. Fix it and start the step over:
+If it does not, uv built the environment on a different Python. Fix the path and start the step
+over:
 
 ```bash
 rm -rf .venv
@@ -632,22 +672,56 @@ rm -rf .venv
 Do not continue past a mismatch. Everything will appear to work in the terminal and fail inside
 TouchDesigner, which is a miserable thing to debug later.
 
-> **Every new terminal:** you must run `source scripts/setup-shell.sh` and
+#### If you see "No interpreter found for Python 3.11.x"
+
+```
+error: No interpreter found for Python 3.11.10 in managed installations, search path, or registry
+hint: A managed Python download is available for Python 3.11.10, but Python downloads are set to 'never'
+```
+
+This means uv was asked for a Python *version* and could not find one — it was not told *where*
+TouchDesigner's Python is. Almost always, `scripts/setup-shell.sh` was not sourced in this terminal,
+or `--python "$TD_PYTHON"` was left off `uv venv`, so uv fell back to the version in
+`pyproject.toml`. TouchDesigner's Python is not on the system PATH or in the Windows registry, so
+uv cannot find it by version alone.
+
+This is the safety setting working as intended: without `python-downloads = "never"`, uv would
+have quietly downloaded its own Python 3.11.10, and the environment would have worked in the
+terminal and failed inside TouchDesigner. Fix it with the three commands at the top of this step.
+
+> **Every new terminal:** run `source scripts/setup-shell.sh` and
 > `source .venv/Scripts/activate` again. They do not persist between sessions.
 
 ---
 
 ### Step 8 — Install faster-whisper and the CUDA libraries
 
-Speech recognition needs NVIDIA's CUDA libraries, which are not bundled. **Git Bash**, in
-`/c/theoracle`, environment active:
+Speech recognition needs NVIDIA's CUDA libraries, which are not bundled. **Git Bash**, in your
+repository folder, environment active:
 
 ```bash
-uv pip install faster-whisper
-uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+uv add faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-Test it on its own before going further — this is the step that most often fails:
+**Check the first line of the output.** It should mention your repository's `.venv`. If it ever
+says `Using Python ... environment at: C:\Program Files\Derivative\TouchDesigner\...`, stop —
+uv is pointed at TouchDesigner's own Python. Run `unset UV_PYTHON` and try again. Do **not** run
+the terminal as administrator to get past an "Access is denied" error: that error is what is
+protecting TouchDesigner.
+
+Use `uv add`, not `uv pip install`. `uv add` records the packages in `pyproject.toml` and the
+lockfile. `uv pip install` does not — and `uv sync` removes anything the lockfile does not list, so
+packages installed with `uv pip` quietly disappear the next time anyone runs `uv sync`.
+
+Confirm it went into the right place:
+
+```bash
+python -c "import faster_whisper, sys; print(sys.prefix)"
+```
+
+That must print a path ending in your repository's `.venv`.
+
+Then test it on the GPU — this is the step that most often fails:
 
 ```bash
 python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3-turbo', device='cuda', compute_type='int8'); print('loaded ok')"
@@ -657,20 +731,6 @@ The first run downloads about 1.6 GB. **Do this on your own network, not the gal
 
 If you see `loaded ok`, speech recognition is working on the GPU. If you see an error mentioning
 `cudnn64_9.dll` or `cublas64_12.dll`, see [Troubleshooting](#troubleshooting).
-
-Record what you just installed, because these two commands are invisible to `uv sync` and will not
-be reproduced on another machine:
-
-```bash
-cat > scripts/requirements-gpu.txt <<'EOF'
-# Installed with `uv pip`, not `uv add`, because faster-whisper needs the
-# NVIDIA CUDA 12 / cuDNN 9 libraries which are not managed in pyproject.toml.
-# Run these after `uv sync` on a new machine:
-faster-whisper
-nvidia-cublas-cu12
-nvidia-cudnn-cu12
-EOF
-```
 
 ---
 
@@ -690,12 +750,20 @@ Piper turns text into speech. Each voice is two files: a model and its configura
 
 **Git Bash**, in `/c/theoracle`, environment active:
 
+`piper-tts` is already installed — it is in `pyproject.toml`, so `uv sync` in Step 7 put it in
+`.venv`.
+
 ```bash
-uv pip install piper-tts
-python -m piper.download_voices fi_FI-harri-medium --data-dir voices
-python -m piper.download_voices sv_SE-nst-medium  --data-dir voices
-python -m piper.download_voices en_GB-alba-medium --data-dir voices
-# ...one line per language you add - see below
+python -m piper.download_voices fi_FI-harri-medium          --data-dir voices
+python -m piper.download_voices sv_SE-alma-medium           --data-dir voices
+python -m piper.download_voices en_GB-alba-medium           --data-dir voices
+python -m piper.download_voices es_MX-ald-medium            --data-dir voices
+python -m piper.download_voices de_DE-thorsten-high         --data-dir voices
+python -m piper.download_voices et_EE-news-medium           --data-dir voices
+python -m piper.download_voices it_IT-paola-medium          --data-dir voices
+python -m piper.download_voices pt_BR-cadu-medium           --data-dir voices
+python -m piper.download_voices ja_JP-hi_fi_captain-medium  --data-dir voices
+python -m piper.download_voices zh_CN-huayan-medium         --data-dir voices
 ls -la voices/
 ```
 
@@ -703,22 +771,21 @@ Each voice gives you one `.onnx` and one `.onnx.json` file. If the `--data-dir` 
 recognised, check `python -m piper.download_voices --help` — the files must end up in
 `C:\theoracle\voices`, not wherever you happened to be.
 
-#### Going to ten languages
+#### Adding or changing a language
 
 Speech recognition already understands about 99 languages; the limit is which ones have a Piper
-voice. Browse [the voice list](https://huggingface.co/rhasspy/piper-voices), pick one voice per
-language (the `medium` quality is the sweet spot on CPU), download it with the command above, and
-add it to **both** `stt.allowed_languages` and `tts.voices` in `config.yaml` (Step 10).
-
-A sensible ten for a gallery in Finland: Finnish, Swedish, English, Spanish, Estonian, Russian,
-German, French, Italian, Arabic. Choose for your actual audience rather than for model quality.
+voice. Browse [the voice list](https://huggingface.co/rhasspy/piper-voices), download the voice as
+above, then add the language to **both** `stt.allowed_languages` and `tts.voices` in
+`config.yaml` (Step 10). See [Languages](#languages) for the full table and for what happens when
+a visitor changes language halfway through.
 
 **The one rule:** a language goes into `allowed_languages` only once its voice is installed. The
 engine never replies in a language it cannot speak, and never feeds Finnish text to an English
 voice.
 
 **Listen to each voice before moving on.** Quality varies a lot between languages; audition every
-one with a real reply from the Oracle, not a test sentence.
+one with a real reply from the Oracle, not a test sentence — and compare their loudness against
+each other, since they are not level-matched.
 
 #### The origin recordings
 
@@ -762,9 +829,14 @@ stt:
   device: cuda
   compute_type: int8
   min_confidence: 0.5
-  allowed_languages: [fi, sv, en]   # add each language only once its voice is installed
-  # example of ten: [fi, sv, en, es, et, ru, de, fr, it, ar]
+  allowed_languages: [fi, sv, en, es, de, et, it, pt, ja, zh]
   default_language: fi
+
+  # Changing language mid-visit - see "Languages"
+  language_lock: sticky              # sticky | per_turn | fixed
+  switch_confidence: 0.75            # higher bar than min_confidence to change language
+  switch_min_words: 3                # short replies never trigger a switch
+  switch_min_speech_s: 1.5
 
 llm:
   host: http://localhost:11434
@@ -811,11 +883,15 @@ conversation:
 tts:
   voices:                          # one per language in stt.allowed_languages
     fi: fi_FI-harri-medium
-    sv: sv_SE-nst-medium
+    sv: sv_SE-alma-medium
     en: en_GB-alba-medium
-    # es: <voice name from the Piper voice list>
-    # et: <voice name>
-    # ...
+    es: es_MX-ald-medium
+    de: de_DE-thorsten-high        # the only 'high' voice - slower to synthesise
+    et: et_EE-news-medium
+    it: it_IT-paola-medium
+    pt: pt_BR-cadu-medium
+    ja: ja_JP-hi_fi_captain-medium
+    zh: zh_CN-huayan-medium
   length_scale: 1.0
   output_dir: runtime/audio
   max_duration_s: 45
@@ -826,7 +902,8 @@ prerendered:
   origin:                          # played on the FIRST "what are you?" question
     fi: [origin_fi_female.wav, origin_fi_male.wav]   # one chosen at random, fixed per visit
     es: [origin_es.wav]
-    default: [origin_en.wav]       # English, Swedish, and every other language
+    en: [origin_en.wav]
+  fallback: generate               # no recording in their language -> answer live from origin.md
 
 guard:
   max_input_chars: 300
@@ -1108,6 +1185,75 @@ re-record, and bring `origin.md` into line so a follow-up answer never contradic
 
 ---
 
+## Languages
+
+Ten languages, one Piper voice each:
+
+| Language | Code | Voice | Origin recording |
+| --- | --- | --- | --- |
+| Finnish | `fi` | `fi_FI-harri-medium` | Yes — two, one chosen at random |
+| Swedish | `sv` | `sv_SE-alma-medium` | No — answered live |
+| English | `en` | `en_GB-alba-medium` | Yes |
+| Spanish | `es` | `es_MX-ald-medium` | Yes |
+| German | `de` | `de_DE-thorsten-high` | No — answered live |
+| Estonian | `et` | `et_EE-news-medium` | No — answered live |
+| Italian | `it` | `it_IT-paola-medium` | No — answered live |
+| Portuguese | `pt` | `pt_BR-cadu-medium` | No — answered live |
+| Japanese | `ja` | `ja_JP-hi_fi_captain-medium` | No — answered live |
+| Chinese | `zh` | `zh_CN-huayan-medium` | No — answered live |
+
+Speech recognition understands around 99 languages regardless; this list is what the Oracle can
+*speak*. A visitor using anything else gets a reply in `default_language`, because the engine never
+replies in a language it has no voice for.
+
+`de_DE-thorsten-high` is the only `high` quality voice in the set. It sounds better and takes
+roughly twice as long to synthesise — still under a second for a short reply, but worth knowing if
+German answers feel a beat slower. Voices also differ in loudness and timbre; check the levels of
+all ten against each other on the mixer before opening, rather than one at a time.
+
+### Changing language mid-visit
+
+A visitor can switch language, and the Oracle follows without remarking on it — it holds everyone
+who went inside the collective, so speaking many languages is in character.
+
+The risk is not deliberate switching, it is **accidental flipping**. Language detection is least
+reliable on short utterances, and short utterances are common: a Finnish visitor says "okay", or
+"mm", or their own name, and the detector reports English. Without a guard, the Oracle would answer
+in English for the rest of the visit.
+
+So the language is **sticky**:
+
+1. The first confident detection sets the visit's language.
+2. After that, changing it needs a **higher bar** than the initial detection: `switch_confidence`
+   0.75 rather than 0.5.
+3. Utterances shorter than `switch_min_words` (3) or `switch_min_speech_s` (1.5 s) **never** change
+   the language, whatever they are detected as. They inherit whatever is in force.
+4. A language with no installed voice never becomes the visit's language.
+
+A visitor who genuinely switches speaks a whole sentence in the new language and is followed
+immediately. A visitor who says "joo" is not.
+
+Set `language_lock: per_turn` to follow every utterance — useful when testing, chaotic in a room.
+`fixed` pins the whole visit to `default_language`, which is worth having for an opening night
+where you want no surprises.
+
+### The origin question in the other seven languages
+
+Only Finnish, Spanish and English have a recorded origin narration. For everything else,
+`fallback: generate` means the engine loads `origin.md` and the Oracle answers the question live,
+**in the visitor's own language**.
+
+That is the better trade for those languages. A Japanese visitor asking what the Oracle is would
+otherwise hear two minutes of English and then resume in Japanese, which is a bigger jar than
+losing the canonical recording. The live answer costs the usual four to six seconds and is shorter
+than the recording — two to four sentences rather than the whole history — which is the normal
+behaviour for a follow-up question anyway.
+
+Record more narrations later if you want them; adding one is a line in `config.yaml` under
+`prerendered.origin`.
+
+---
+
 ## How a visit is stored
 
 Raw material exists only while a visitor is standing there. Three stages:
@@ -1217,6 +1363,8 @@ The settings most worth adjusting once it is running:
 | `websearch.self_search.narrow_questions` | 1 | Disambiguation attempts before the Oracle gives up gracefully |
 | `prerendered.origin` | fi / es / default | Which recording plays for which language on the first origin question |
 | `conversation.fate_max_entries` | 8 | How many facts of the foretold life the Oracle keeps track of per visit |
+| `stt.language_lock` | sticky | Whether the visit's language can change, and how easily |
+| `stt.switch_confidence` | 0.75 | How sure detection must be to change language mid-visit |
 | `llm.num_ctx` | 16384 | The model's context window. Never lower it below what the prompt needs — see Step 2 |
 | `tts.length_scale` | 1.0 | Speech speed. Above 1.0 is slower |
 
@@ -1231,9 +1379,13 @@ starts immediately.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `uv: command not found` in Git Bash | uv is not installed, or Git Bash has a stale PATH | Run `ls ~/.local/bin/uv.exe`. If it exists, close all Git Bash windows (and VS Code, if it runs there) and reopen, or `source scripts/setup-shell.sh`. If it does not exist, rerun the installer in **PowerShell** (Step 1) or `winget install --id=astral-sh.uv -e` |
+| `No interpreter found for Python 3.11.x ... downloads are set to 'never'` | `uv venv` was not told where TouchDesigner's Python is | `source scripts/setup-shell.sh`, check `"$TD_PYTHON" --version`, then `uv venv --python "$TD_PYTHON"` (Step 7) |
+| `Using Python ... environment at: C:\Program Files\Derivative\TouchDesigner\bin` then `Access is denied` | `UV_PYTHON` is set, so uv is installing into TouchDesigner itself | `unset UV_PYTHON`, update `scripts/setup-shell.sh` to the current version (Step 5), retry. **Never** run as administrator to get past this |
+| A package worked, then vanished after `uv sync` | It was installed with `uv pip install` | Install it with `uv add` so it is in `pyproject.toml` |
 | `python -c "import sys..."` prints a different version than TouchDesigner | uv built the environment on the wrong Python | `rm -rf .venv`, correct the path in `scripts/setup-shell.sh`, redo Step 7 |
-| `Could not locate cudnn64_9.dll` or `cublas64_12.dll` | CUDA libraries not on PATH | Re-run `uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`. If it persists, use Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
-| An error mentioning cuDNN 8 | Version mismatch | `uv pip install --force-reinstall ctranslate2==4.4.0` |
+| `Could not locate cudnn64_9.dll` or `cublas64_12.dll` | CUDA libraries not on PATH | Check `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` are in `pyproject.toml` (`uv add` them if not); add their `bin` folders under `.venv\Lib\site-packages\nvidia` to PATH in `run.bat`. If it persists, use Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
+| An error mentioning cuDNN 8 | Version mismatch | `uv add "ctranslate2==4.4.0"` |
 | A guide tells you to download Piper from `rhasspy/piper` | That repository is archived | Use `pip install piper-tts`, which is OHF-Voice/piper1-gpl — see Step 9 |
 | `ollama: command not found` | PATH not refreshed | Reopen PowerShell; if it persists, restart Windows |
 | Connection refused on port 11434 | Ollama server not running | Check the system tray, or start Ollama from the Start menu |
@@ -1251,6 +1403,8 @@ starts immediately.
 | Origin question plays nothing | Recording missing or misnamed | Check the four files in `voices/prerendered/` match the names in `config.yaml` exactly |
 | Origin plays, then the Oracle tells it again | Narration not written to the session history | Check the prerendered handoff in `engine/__main__.py` records it as an Oracle turn |
 | A reply comes out in a language with no voice | Language added to `allowed_languages` before its voice | Remove it, or install the voice and add it to `tts.voices` |
+| The Oracle switches language after a short "okay" or "joo" | Detection flipped on a short utterance | Confirm `language_lock: sticky`; raise `switch_min_words` or `switch_confidence` |
+| A visitor switched language deliberately and the Oracle did not follow | The switch bar is too high for how they spoke | Lower `switch_confidence`, or `switch_min_words` to 2 |
 | Finnish transcribed as Estonian | Short utterance, uncertain detection | Normal. `min_confidence` catches it; adding Estonian with a voice turns it into a feature |
 | Whisper transcribes "Kiitos" from silence | Hallucination on near-empty audio | Set the mixer's gate properly — a hardware fix, not a software one |
 | Web search returns an auth error | Key missing or loaded too late | Check `.env`, and that `load_dotenv()` runs **before** `import ollama` |
@@ -1306,10 +1460,9 @@ C:\theoracle\
       origin_fi_male.wav
 
   scripts/
-    setup-shell.sh           environment variables for a new terminal
+    setup-shell.sh           TD_PYTHON and PATH for a new terminal - source it first
     check_env.py             diagnostics
     ollamaweb.py             web search smoke test
-    requirements-gpu.txt     what was installed outside pyproject.toml
   td/
     theoracle.toe            the TouchDesigner project
     scripts/ws_callbacks.py

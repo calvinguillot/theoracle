@@ -5,6 +5,7 @@ runtime/
 logs/
 config.local.yaml
 td/*.toe.[0-9]*
+voices/*
 
 # Secrets - the API key lives here and must never be committed
 .env
