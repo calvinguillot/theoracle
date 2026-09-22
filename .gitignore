@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+runtime/
+logs/
+config.local.yaml
+td/*.toe.[0-9]*
+
+# Secrets - the API key lives here and must never be committed
+.env

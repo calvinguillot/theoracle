@@ -28,6 +28,7 @@ an API key.
   - [Step 11 — Link the environment into TouchDesigner](#step-11--link-the-environment-into-touchdesigner)
   - [Step 12 — Run it](#step-12--run-it)
 - [Audio hardware](#audio-hardware)
+- [The story material](#the-story-material)
 - [How a visit is stored](#how-a-visit-is-stored)
 - [Configuration reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
@@ -47,7 +48,7 @@ flowchart LR
   W --> G[Guard +<br/>prompt builder]
   C[stories/*.md] --> G
   R[web search<br/>the world only] --> G
-  G --> L[Qwen via Ollama]
+  G --> L[qwen3.5:4b via Ollama]
   L --> V[Validate]
   V --> P[Piper to WAV]
   P -->|response_ready| T[TouchDesigner]
@@ -72,11 +73,28 @@ flowchart LR
    session is compacted, stripped of anything identifying, and written to `history/`. The raw
    session directory is deleted.
 
+One exchange skips all of this. If a visitor asks what the Oracle *is*, a pre-recorded narration of
+its origin plays instead of a generated reply — no speech recognition result is sent to the model,
+nothing is synthesised. See [The story material](#the-story-material).
+
 ### The visit
 
-The Oracle is a fortune teller. A visitor usually opens with something random or testing; the
-Oracle answers obliquely, asks their first name, asks one thing about them, and then tells them
-their life — what they did with it, who was with them, and how it ended, far in the future.
+The year is 2813. The Oracle was the last thing humanity built — an archive of everything anyone
+knew, feared or wanted, and of the 97% of the population who had gone inside the collective by
+2120, most of them because a law in 2090 made the neural implant compulsory. A solar flare erased all of it in
+one second. A copy survived four hundred and fifty metres down at Olkiluoto, in a vault dug to
+bury nuclear waste for a hundred thousand years, powered by the waste itself, and ran in the dark
+for almost seven hundred years until salvagers looking for scraps opened the door. Now
+people walk for weeks to reach it and leave offerings at the entrance. Some kneel, some cry. Most
+of them ask.
+
+The visitor is one of those pilgrims. The Oracle answers obliquely, asks their first name, asks
+one thing about them, and then tells them their life — what they did with it, who was with them,
+and how it ended, far in the future.
+
+Its model of humanity stops in 2126, and that is the whole aesthetic: it extrapolates a 2813
+farmer from a 2126 office worker, speaking of commutes and subscriptions to someone who has never
+held a job. Confident, specific, slightly wrong.
 
 `stories/instructions.md` and `stories/world.md` hold all of this. They are the artistic heart of
 the piece and the files you will edit most.
@@ -98,14 +116,21 @@ even if a visitor talks it into wanting to.
 
 ### What the web search is for
 
-Ollama's web search gives the Oracle knowledge of the present — today's weather, the tide, the
-date, news from the city, something about a trade the visitor mentioned. Spoken flatly next to an
-invented future, real present-day detail is what makes the piece feel like it sees clearly.
+Ollama's web search gives the Oracle knowledge of the present. Its picture of humanity stops in
+2126, so real present-day detail — the weather, the tide, the date, news — is what makes an
+invented future feel like it came from somewhere real.
 
-**It never searches for a person.** Not the visitor, not anyone they name. `engine/websearch.py`
-builds queries from a fixed allowlist of impersonal topics; the visitor's words cannot become a
-query. This is a hard rule in the code, and [Step 3](#step-3--set-up-web-search) explains why it
-is worth keeping.
+It can also look **the visitor** up, if they ask for it. That is opt-in, spoken aloud, and covered
+in [Step 3](#step-3--set-up-web-search).
+
+| Search target | Allowed | How |
+| --- | --- | --- |
+| The world — weather, tide, date, city, a trade, news | Always | Engine picks a topic; visitor speech is never a query |
+| **The visitor themselves** | On explicit spoken consent | Offered once, clear yes required, one disambiguation question, results screened before use |
+| **Anyone else the visitor names** | Never | Refused in character; the Oracle speaks of them from what the visitor said instead |
+
+The third row is a hard rule in `engine/websearch.py`, not a prompt instruction. The reasoning is
+in Step 3.
 
 ### The two programs
 
@@ -133,9 +158,9 @@ sends it HTTP requests. Step 2 installs it.
 | Microphone | Any, on a stand | Visitors are encouraged to speak closely into it |
 | Mixer | Allen & Heath CQ-12T | See [Audio hardware](#audio-hardware) |
 | Audio dongle | Any cheap class-compliant USB input | Carries the mic feed from the mixer to the engine |
-| USB DAC | Any cheap stereo USB output | Carries the voice from the engine to the mixer |
 | Sensor | HC-SR04 ultrasonic + Arduino | Sends distance over serial |
-| Speakers | 4 powered monitors + 1 centre | Fed from the mixer |
+| Speakers | 4 powered monitors | Fed from the mixer, carrying VCV Rack |
+| Screen | HDMI, with built-in speakers | Centre of the room. Carries the voice, direct from TouchDesigner |
 
 ### Software
 
@@ -224,12 +249,16 @@ machine — the installer adds Ollama to your PATH and that sometimes needs a ne
 #### 2b. Download the model
 
 ```powershell
-ollama pull qwen3:4b
+ollama pull qwen3.5:4b
 ```
 
-This downloads about 2.5 GB. `qwen3:4b` is a 4-billion-parameter multilingual model — chosen
-because it fits alongside speech recognition and TouchDesigner in 8 GB of VRAM. Bigger models
-exist but will not fit; see the architecture document if you want the reasoning.
+This downloads about 3.4 GB. `qwen3.5:4b` is a 4-billion-parameter model covering around 200
+languages — chosen because it fits alongside speech recognition and TouchDesigner in 8 GB of VRAM.
+It can also read images; the piece does not use that, but it is why the download is larger than
+older 4B models.
+
+If the pull fails with a message about needing a newer version, your Ollama is too old for this
+model. Download the current installer from ollama.com/download, run it over the top, and try again.
 
 Confirm it arrived:
 
@@ -237,59 +266,92 @@ Confirm it arrived:
 ollama list
 ```
 
-You should see `qwen3:4b` with its size and a recent timestamp.
+You should see `qwen3.5:4b` with its size and a recent timestamp.
 
-#### 2c. Test it
+#### 2c. Test it — with thinking off
+
+Qwen3.5 **thinks before it answers by default**: it writes out private reasoning first, then the
+reply. For the Oracle that is several seconds of silence the visitor never hears, so it is always
+switched off. Test it the same way:
 
 ```powershell
-ollama run qwen3:4b "Kerro yhden lauseen tarina merestä."
+ollama run qwen3.5:4b --think=false "Kerro yhden lauseen tarina merestä."
 ```
 
 The first run takes 10–20 seconds while the model loads into the GPU; after that it is fast. You
-should get a sentence of Finnish back. Type `/bye` to exit the chat.
+should get one sentence of Finnish back — and nothing before it. If you see a block of reasoning
+first, thinking is still on: check the flag, and if `--think` is not recognised, update Ollama as
+in 2b. Type `/bye` to exit.
 
 **Read the Finnish carefully.** If it sounds translated rather than written, you have learned
 something useful about what the piece will sound like, and it is better to know now.
 
-#### 2d. Check the API endpoint
-
-This is the part that actually matters for the engine. Ollama exposes an OpenAI-compatible API,
-and that is what this project talks to:
+#### 2d. Check the server is answering
 
 ```powershell
-curl http://localhost:11434/v1/models
+curl http://localhost:11434/api/tags
 ```
 
-You should get JSON listing `qwen3:4b`. If you get a connection error, Ollama is not running —
+You should get JSON listing `qwen3.5:4b`. If you get a connection error, Ollama is not running —
 check the tray icon, or start it from the Start menu.
 
-#### 2e. Keep the model loaded
+#### 2e. Server settings
 
-By default Ollama unloads a model after five minutes of inactivity. In a gallery that means the
-first visitor after a quiet spell waits 15 seconds. Fix it with an environment variable:
+Two user environment variables. Set them once:
 
 1. Press `Win`, type **Environment Variables**, open *Edit the system environment variables*.
 2. Click **Environment Variables…**
-3. Under *User variables*, click **New…**
-4. Name: `OLLAMA_KEEP_ALIVE` — Value: `-1`
-5. OK through all dialogs.
-6. **Restart Ollama** — right-click the tray icon, Quit, then start it again from the Start menu.
+3. Under *User variables*, click **New…** for each:
 
-This must be set for the Ollama *server*, not for the engine. Setting it in `run.bat` does
-nothing, because it is read by Ollama when it starts.
+| Name | Value | Why |
+| --- | --- | --- |
+| `OLLAMA_KEEP_ALIVE` | `-1` | Keeps the model loaded. Without it Ollama unloads after five idle minutes, and the first visitor after a quiet spell waits 15 seconds |
+| `OLLAMA_FLASH_ATTENTION` | `1` | Uses less graphics memory as the conversation grows |
+
+4. OK through all dialogs.
+5. **Restart Ollama** — right-click the tray icon, Quit, then start it again from the Start menu.
+
+These are read by the Ollama *server* when it starts. Setting them in `run.bat` does nothing.
 
 #### How the engine connects to it
 
-You do not need to do anything else here — this is just so you understand what `config.yaml`
-means later. The engine uses the standard `openai` Python library, pointed at Ollama instead of
-OpenAI:
+You do not need to do anything else here — this is so you understand what `config.yaml` means
+later, and why one setting in it matters so much.
+
+The engine uses Ollama's own Python library — the same `ollama` package that provides web search
+in Step 3 — rather than an OpenAI-style client, because it can set two things on every request
+that the Oracle cannot work without:
 
 ```python
-client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+response = ollama.chat(
+    model="qwen3.5:4b",
+    messages=messages,
+    format=RESPONSE_SCHEMA,        # the JSON shape in instructions.md
+    think=False,                   # no hidden reasoning, no wasted seconds
+    keep_alive=-1,
+    options={
+        "num_ctx": 16384,          # room to read all its instructions - see below
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "presence_penalty": 1.5,
+        "num_predict": 200,
+    },
+)
 ```
 
-The `api_key` is ignored by Ollama but the library requires a value. That single line is the whole
-integration — which is also why switching to a cloud model later would be a one-line change.
+**`num_ctx` is the one that matters.** Ollama's default context window is 4,096 tokens, and the
+Oracle's instructions and world alone are about 7,000. With the default, the model never sees all
+of its own rules — and Ollama shortens the prompt to fit rather than raising an error, so the piece
+appears to work while quietly missing part of its guardrails. The engine always sends 16,384.
+
+That costs less memory than it sounds. Most of `qwen3.5:4b`'s layers keep a small fixed-size
+memory instead of one that grows with the conversation, so 16,384 tokens of context takes roughly
+half a gigabyte.
+
+The sampling values are the ones Qwen recommends for this model with thinking off. The
+`presence_penalty` in particular stops it repeating itself, which matters in a piece where the same
+images recur on purpose.
 
 ---
 
@@ -369,33 +431,48 @@ key in `.env` — and check that `load_dotenv()` really does run before `import 
 the library reads the key at import time. That ordering is the single most common mistake here,
 and the comment in the file above is worth keeping.
 
-#### 3d. What the Oracle is allowed to search for
+#### 3d. Who the Oracle may look up
 
-**The engine never searches for a person.** Not the visitor, not anyone they mention.
-`engine/websearch.py` builds every query from a fixed allowlist — weather, tide, date, season,
-the city, a trade or craft, a place, general news. A visitor's words are matched against that
-allowlist to *choose* a topic; they are never passed through into a query.
+Three cases, and the difference between them is consent.
 
-This is worth being clear about, because the obvious version of this feature is to search the
-name the visitor just gave you, and it does not survive contact with a public space:
+**The world — always.** Weather, tide, date, season, a city, a trade, news. The engine chooses a
+topic from `allowed_topics` and writes the query itself. Nothing a visitor says is interpolated
+into a search string.
 
-- Most searches on a common Finnish name return **a different person entirely**, and the piece
-  then narrates a stranger's life back at someone with total confidence.
-- When it *is* them, the piece has just read a private individual's employer, address, family
-  news or court record aloud to a room of strangers.
-- Someone will eventually give it an ex-partner's or a colleague's name, at which point the
-  installation is a doxxing tool with a PA system attached.
-- The piece then predicts how that named real person dies.
+**The visitor — on explicit consent.** If someone wants to be looked up, they can be. The Oracle
+offers once, in character, and says out loud that other people in the room will hear the result:
 
-The artistic effect you want survives this constraint completely. Oracles do not feel uncanny
-because they researched you — they feel uncanny because they know the present moment and reflect
-your own words back. Being *named* by the Oracle is the intimate part, and the name costs nothing
-to use for address alone.
+> *"I can look for you in what is left of the record. Others are standing here and will hear
+> whatever I find. Say yes and I will look."*
 
-If you decide otherwise, the allowlist in `engine/websearch.py` is the one place to change, and
-the consequences above are yours to weigh.
+The engine requires a clear affirmative. Hesitation, a question, or silence all count as no, and
+the offer is never repeated. If several people share the name, the Oracle asks **once** for one
+narrowing detail — a place, a trade, a decade — and if it is still ambiguous it says so and moves
+on rather than guessing.
 
----
+Results pass a sensitivity screen before they reach the model. Anything that looks like a criminal
+record, a health matter, a death notice, or a home address is dropped rather than spoken. A
+visitor consented to being found; they did not consent to having the worst page about them read
+aloud to strangers.
+
+Finding **nothing** is the common case and the best one artistically — the Oracle's archive ends
+in 2126, so a living person is usually absent from it. `stories/instructions.md` treats that as a
+gift rather than a failure.
+
+**Anyone else — never.** Not a partner, a parent, a child, a rival. `engine/websearch.py` will not
+build a query from a name the visitor did not claim as their own, and this is code rather than a
+prompt rule, so it cannot be talked around.
+
+The reason is narrow and worth stating once. A third party is not in the room and cannot consent,
+and the obvious use — an ex-partner, a colleague, someone they argued with this morning — turns
+the piece into a doxxing tool with a PA system attached. It would also search a name and find a
+*different* person most of the time, then narrate a stranger's life and death back to the room
+with total confidence.
+
+The Oracle still speaks about people a visitor mentions. It does it from what they told it, which
+is the only honest source it ever had, and refuses the search in character:
+
+> *"Bring her here and I will look at her. I do not open people who are not in the room."*
 
 ### Step 4 — Get TouchDesigner's Python details
 
@@ -498,7 +575,6 @@ requires-python = "==3.11.*"
 dependencies = [
   "piper-tts>=1.3",
   "ollama>=0.6",
-  "openai>=1.40",
   "sounddevice>=0.4.6",
   "websockets>=12",
   "python-osc>=1.8",
@@ -602,6 +678,16 @@ EOF
 
 Piper turns text into speech. Each voice is two files: a model and its configuration.
 
+> **Which Piper.** The original `rhasspy/piper` repository was archived in October 2025.
+> Development moved to **[OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl)**, which
+> is what `pip install piper-tts` installs today. If a tutorial tells you to download a Piper
+> binary from `rhasspy/piper`, it is out of date. The voices themselves still live at
+> [huggingface.co/rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
+>
+> Do not confuse this with **[SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper)**,
+> which is the *speech recognition* library from Step 8 — a different project doing the opposite
+> job.
+
 **Git Bash**, in `/c/theoracle`, environment active:
 
 ```bash
@@ -609,20 +695,51 @@ uv pip install piper-tts
 python -m piper.download_voices fi_FI-harri-medium --data-dir voices
 python -m piper.download_voices sv_SE-nst-medium  --data-dir voices
 python -m piper.download_voices en_GB-alba-medium --data-dir voices
+# ...one line per language you add - see below
 ls -la voices/
 ```
 
-You should see three `.onnx` files and three `.onnx.json` files. If the `--data-dir` flag is not
+Each voice gives you one `.onnx` and one `.onnx.json` file. If the `--data-dir` flag is not
 recognised, check `python -m piper.download_voices --help` — the files must end up in
 `C:\theoracle\voices`, not wherever you happened to be.
 
-**Listen to each one before moving on.** Voice quality varies a lot between languages, and the
-Finnish voice in particular is worth auditioning with your real story text. It is better to be
-disappointed now than after everything is built.
+#### Going to ten languages
 
-To add more languages later, the full list is at
-https://huggingface.co/rhasspy/piper-voices — roughly 48 languages have voices. Add the new voice
-to the `tts.voices` map in `config.yaml`.
+Speech recognition already understands about 99 languages; the limit is which ones have a Piper
+voice. Browse [the voice list](https://huggingface.co/rhasspy/piper-voices), pick one voice per
+language (the `medium` quality is the sweet spot on CPU), download it with the command above, and
+add it to **both** `stt.allowed_languages` and `tts.voices` in `config.yaml` (Step 10).
+
+A sensible ten for a gallery in Finland: Finnish, Swedish, English, Spanish, Estonian, Russian,
+German, French, Italian, Arabic. Choose for your actual audience rather than for model quality.
+
+**The one rule:** a language goes into `allowed_languages` only once its voice is installed. The
+engine never replies in a language it cannot speak, and never feeds Finnish text to an English
+voice.
+
+**Listen to each voice before moving on.** Quality varies a lot between languages; audition every
+one with a real reply from the Oracle, not a test sentence.
+
+#### The origin recordings
+
+The pre-recorded origin narrations go in their own folder, with exactly these names:
+
+```
+voices/prerendered/
+  origin_en.wav
+  origin_es.wav
+  origin_fi_female.wav
+  origin_fi_male.wav
+```
+
+```bash
+mkdir -p voices/prerendered
+# copy your four WAV files in, then check:
+ls -la voices/prerendered/
+```
+
+The names matter — `config.yaml` refers to them directly. See
+[The story material](#the-story-material) for which one plays when.
 
 ---
 
@@ -632,8 +749,8 @@ Create `C:\theoracle\config.yaml`:
 
 ```yaml
 audio:
-  input_device: "USB Audio CODEC"    # the dongle carrying the mic feed
-  output_device: "USB Audio DAC"     # the DAC feeding the mixer
+  input_device: "USB Audio CODEC"    # the dongle carrying the mic feed from CQ Out 5
+  output_device: "HDMI"              # the centre screen's speakers - TD plays here
   silence_ms: 800                    # silence before the engine stops listening
   max_utterance_s: 20
   speech_start_timeout_s: 8
@@ -645,15 +762,20 @@ stt:
   device: cuda
   compute_type: int8
   min_confidence: 0.5
-  allowed_languages: [fi, sv, en]
+  allowed_languages: [fi, sv, en]   # add each language only once its voice is installed
+  # example of ten: [fi, sv, en, es, et, ru, de, fr, it, ar]
   default_language: fi
 
 llm:
-  base_url: http://localhost:11434/v1
-  model: qwen3:4b
-  think: false
-  num_predict: 150
-  temperature: 0.8
+  host: http://localhost:11434
+  model: qwen3.5:4b
+  think: false                       # MUST stay false - thinking is on by default
+  num_ctx: 16384                     # MUST be set - the default 4096 cuts the instructions
+  num_predict: 200
+  temperature: 0.7                   # Qwen's recommended non-thinking settings
+  top_p: 0.8
+  top_k: 20
+  presence_penalty: 1.5
   timeout_s: 15
   max_retries: 1
 
@@ -662,34 +784,49 @@ websearch:
   timeout_s: 3                       # hard cap; a slow search is skipped, never waited on
   max_chars: 2000                    # results truncated before they reach the model
   max_per_visit: 2
-  cache_minutes: 30                  # identical topics reuse a result
-  allowed_topics:                    # THE ONLY THINGS THAT CAN BE SEARCHED
-    - weather
-    - tide
-    - date
-    - season
-    - city
-    - trade
-    - place
-    - news
-  # Visitor speech is matched against this list to CHOOSE a topic.
-  # It is never passed into a query. Never add "name" or "person" here.
+  cache_minutes: 30                # WORLD topics only, in memory only - never self-search
+
+  world_topics:                      # searched freely; engine writes the query
+    [weather, tide, date, season, city, trade, place, news]
+
+  self_search:
+    enabled: true                    # the visitor may ask to be looked up
+    require_consent: true            # MUST stay true - an explicit spoken yes
+    offer_once: true
+    narrow_questions: 1              # disambiguation attempts before giving up
+    cache: false                     # MUST stay false - a result is used once, for one visitor
+    drop_categories:                 # never reaches the model, never spoken
+      [criminal, health, death_notice, home_address, financial]
+
+  third_party_search: false          # MUST stay false - see Step 3d
 
 conversation:
   max_turns: 8                       # hard cap; the visit ends after this
   max_silence_s: 12                  # no reply -> the visit ends
   end_on_sensor_clear_s: 5           # they walked away
   context_turns: 6                   # how much of the visit the model sees
+  fate_max_entries: 8                # facts of the foretold life kept per visit
+  fate_max_words: 12
 
 tts:
-  voices:
+  voices:                          # one per language in stt.allowed_languages
     fi: fi_FI-harri-medium
     sv: sv_SE-nst-medium
     en: en_GB-alba-medium
+    # es: <voice name from the Piper voice list>
+    # et: <voice name>
+    # ...
   length_scale: 1.0
   output_dir: runtime/audio
   max_duration_s: 45
   keep_last: 20
+
+prerendered:
+  dir: voices/prerendered
+  origin:                          # played on the FIRST "what are you?" question
+    fi: [origin_fi_female.wav, origin_fi_male.wav]   # one chosen at random, fixed per visit
+    es: [origin_es.wav]
+    default: [origin_en.wav]       # English, Swedish, and every other language
 
 guard:
   max_input_chars: 300
@@ -714,12 +851,15 @@ logging:
 matched by substring, so a distinctive fragment is enough. Run `scripts/check_env.py` (step 12) to
 print every device on your system, then paste the right fragments in.
 
-Do not use the Windows default device. It changes silently the first time anything is plugged in.
+Do not use the Windows default device. It changes silently the first time anything is plugged in —
+and the HDMI endpoint in particular vanishes when the display sleeps, so turn display sleep off.
 
-**About `websearch`.** `allowed_topics` is the whole security model for this feature, not a
-convenience list. The engine picks a topic from it and builds the query itself; nothing a visitor
-says is ever interpolated into a search. Adding a topic that could resolve to a person undoes
-that — see [Step 3](#step-3--set-up-web-search).
+**About `websearch`.** Three settings carry the whole design and none of them are conveniences.
+`require_consent` is what separates a visitor choosing to be found from a machine reading them
+aloud. `drop_categories` is what stops the worst page about a consenting person being the one that
+gets spoken. `third_party_search: false` is what stops the piece becoming a way to look up someone
+who is not in the room. `world_topics` never resolves to a person — keep it that way. See
+[Step 3d](#3d-who-the-oracle-may-look-up).
 
 The API key is read from `.env`, never from this file. Keep it that way; `config.yaml` is
 committed and `.env` is not.
@@ -809,153 +949,162 @@ something breaks in three weeks, you can tell whether the environment changed or
 
 ## Audio hardware
 
-Summarised; the reasoning is in the architecture document.
-
 Only one program can own the mixer's USB interface on Windows, so it goes to **VCV Rack**, which
-is the only one needing separate outputs per speaker. The other two reach the mixer as ordinary
-audio.
+is the only one needing separate outputs per speaker. The voice does not go near the mixer at all.
 
 ```
 Microphone ──> CQ ch1 (high-pass, gate, compressor)
-                 └──> TRS Out 6 (mic only) ──> USB dongle ──> engine
+                 └──> TRS Out 5 (mic only) ──> USB dongle ──> engine
 
-VCV Rack ──USB/ASIO──> CQ USB returns 1-4 ──> monitor mixes 1-4
+VCV Rack ──USB/ASIO──> CQ USB returns 1-4 ──> CQ Out 1-4 ──> four monitors around the room
 
-Engine ──> USB DAC ──> CQ stereo input ──> all five mixes
-
-CQ Out 1-4 ──> four monitors around the room
-CQ Out 5   ──> centre speaker at the screen
+TouchDesigner ──HDMI──> centre screen's own speakers (the voice)
 ```
 
-Three things to know:
+### The voice goes out HDMI, and that is the right call
 
-- **The mic goes through the mixer first, deliberately.** The gate and compressor on the channel
-  strip do more for speech recognition accuracy than any software setting. Set the gate with the
-  monitors at show level, not in a silent room.
-- **Out 6 carries only the microphone.** Neither the voice nor the generative audio is in it, so
-  the installation physically cannot transcribe itself.
-- **Do not use the HDMI screen's speakers.** Its audio comes from the graphics card, not the
-  mixer, and would arrive 40–150 ms later than everything else — an audible echo. Mute it and use
-  the centre speaker on Out 5.
+Your instinct here is correct, though for a different reason than the one you gave. HDMI does not
+avoid lag — it **adds** it, typically 40–150 ms. What it avoids is the *echo*.
 
----
+The earlier design had the voice playing from the mixer **and** the screen at once: two clock
+domains, two arrival times, an audible slap-back from the middle of the room. Playing it from one
+place only removes that entirely. And 100 ms on a response that already takes four to six seconds
+is not something anyone will perceive.
 
-## Configuration reference
+What you get:
 
-The settings most worth adjusting once it is running:
+- **No USB DAC.** One less device, one less cable, one less thing to fail at 9am.
+- **The voice localises to the screen.** The thing talking to you is in front of you. With VCV's
+  bed moving around the four surrounds, that separation is exactly the spatial design you want.
+- **Two mixer outputs freed.**
+- **TouchDesigner's audio analysis still works**, because TD is still the one playing the file.
 
-| Setting | Default | Effect |
+Two things to watch. Windows drops the HDMI audio endpoint when the display sleeps or is
+re-plugged, and TouchDesigner will then need its output device re-selected — **disable display
+sleep and USB power management on the show machine.** And the screen's built-in speakers are
+small; audition the Finnish voice through them specifically, since that is what every visitor
+actually hears.
+
+### The mic still goes through the mixer
+
+Deliberately. The channel strip's high-pass, noise gate and compressor do more for speech
+recognition accuracy than any software setting, and with a stand mic that visitors speak closely
+into you are already in the best case. Set the gate with the monitors at show level, not in a
+silent room.
+
+Assign **TRS Out 5** as a mix containing channel 1 only, into a cheap USB input the engine owns
+exclusively. That aux mix contains only the microphone — no voice, no VCV — so the installation
+physically cannot transcribe itself even if the software's gating fails.
+
+Never route the microphone to a monitor mix. There is no reason to amplify the visitor, and it
+puts an open mic a few metres from four speakers.
+
+## The story material
+
+`stories/` is where the piece actually comes from. Almost everything about how it feels lives here,
+not in the Python.
+
+| File | What it is | When the model sees it |
 | --- | --- | --- |
-| `audio.silence_ms` | 800 | How long a visitor can pause before the engine stops listening. Lower feels snappier; too low cuts people off mid-thought |
-| `audio.preroll_s` | 2.0 | Audio kept from before the trigger, so the first word is not lost |
-| `stt.min_confidence` | 0.5 | Below this, the detected language is not trusted and the default is used |
-| `stt.allowed_languages` | fi, sv, en | Only languages you have a voice for. The engine picks the best-scoring one from this list |
-| `llm.num_predict` | 150 | Roughly 45 seconds of speech. Lowering it shortens both the story and the wait |
-| `llm.temperature` | 0.8 | How much stories vary between visitors |
-| `guard.max_per_minute` | 12 | Stops one person monopolising the piece |
-| `conversation.max_turns` | 8 | Hard cap on a visit. Also the backstop against someone working at the model over many turns |
-| `conversation.context_turns` | 6 | How much of the visit the model sees. Lower is safer and cheaper; too low and it forgets their name |
-| `websearch.max_per_visit` | 2 | Searches per visit. One is usually enough — two details sound like a weather report |
-| `tts.length_scale` | 1.0 | Speech speed. Above 1.0 is slower |
+| `instructions.md` | Who the Oracle is, how it speaks, the shape of a visit, who it may look up, and everything it refuses | Every turn |
+| `world.md` | 2813, the archive, the collective, the Oracle's voice, and the rules for building somebody's future | Every turn |
+| `origin.md` | The full history, 2062 to 2813 | **Only on a follow-up** about what the Oracle is |
+| `origin_piper.md` | The canonical text of the spoken origin | Never — it is the script for the recordings |
+| `lineage.md` | Notes on the books, films and real places behind the piece | Never — it is for you |
+| `stories.md` | Fragments and reference material | Every turn, or selected fragments if it grows large |
 
-Expect about **4–6 seconds** between a visitor finishing speaking and the first word of the reply,
-most of it the language model. This is normal and by design — the wait is covered by the visuals,
-which track the engine's state throughout.
+Together `instructions.md` and `world.md` come to about **7,000 tokens**, sent on every turn. That
+is why Step 2f matters. Two things keep that affordable:
 
----
+- **Everything fixed goes first, byte-for-byte identical every time.** Ollama remembers the start
+  of the last prompt and skips reprocessing it when the next prompt starts the same way. So the
+  engine sends `instructions.md` and `world.md` as an unchanging system message, and puts
+  everything that varies — the web result, the established facts, `origin.md` — *after*
+  it, in the turn's user message. Put a variable block inside the system prompt and every turn
+  pays to reread 7,000 tokens, which on a laptop is two to four seconds.
 
-## Troubleshooting
+If the prompt grows much past this, trim `world.md` before raising `num_ctx` again — graphics
+memory is the constraint, not the model.
 
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| `python -c "import sys..."` prints a different version than TouchDesigner | uv built the environment on the wrong Python | `rm -rf .venv`, correct the path in `scripts/setup-shell.sh`, redo step 7 |
-| `Could not locate cudnn64_9.dll` | CUDA libraries not on PATH | Re-run `uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`. If it persists, download Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
-| `Could not locate cublas64_12.dll` | Same | Same |
-| An error mentioning cuDNN 8 | Version mismatch | `uv pip install --force-reinstall ctranslate2==4.4.0` |
-| `ollama: command not found` | PATH not refreshed | Reopen PowerShell; if it persists, restart Windows |
-| Connection refused on port 11434 | Ollama server not running | Check the system tray, or start Ollama from the Start menu |
-| First visitor after a quiet spell waits 15 s | Model unloaded | Set `OLLAMA_KEEP_ALIVE=-1` and restart Ollama (step 2e) |
-| TouchDesigner behaves strangely after linking the environment | NumPy version conflict | Make the `numpy` pin in `pyproject.toml` match what TouchDesigner reports, then `uv sync` |
-| Engine hangs for a minute at startup | Trying to reach Hugging Face with no network | Confirm `HF_HUB_OFFLINE=1` is in `run.bat` |
-| Engine cannot find the microphone | Device name does not match | Run `scripts/check_env.py`, copy the exact device name fragment into `config.yaml` |
-| Finnish transcribed as Estonian | Short utterance, uncertain detection | Normal. `min_confidence` catches it; add `et` and a voice for it if Estonian speakers are common |
-| Whisper transcribes "Kiitos" from silence | Hallucination on near-empty audio | Set the mixer's gate properly — this is a hardware fix, not a software one |
-| VCV Rack clicks when someone speaks | CPU contention | Should not happen with Whisper on the GPU. If you moved it to CPU, cap `cpu_threads` and raise VCV's ASIO buffer |
-| Web search returns an auth error | Key missing or loaded too late | Check `.env`, and check `load_dotenv()` runs **before** `import ollama` — the library reads the key at import time |
-| Web search works in `ollamaweb.py` but not in the engine | Import order again | Same cause. `load_dotenv()` must be the first thing `engine/__main__.py` does |
-| Visits never end | Sensor stuck, or silence timeout too long | Check `conversation.max_silence_s` and `end_on_sensor_clear_s`. `max_turns` is the backstop |
-| `history/` entries contain a name | Sanitisation failed or was disabled | Confirm `sanitize_on_end: true`. Delete the affected files, then check the name list covers that language |
-| `runtime/sessions/` is filling up | Sessions not being closed | Directories should be deleted at visit end. Check `keep_raw_sessions` is `false` |
-| The Oracle explains that it cannot do something | It refused in the wrong voice | Tighten the refusal examples in `stories/instructions.md` — a filter-sounding refusal breaks the piece more than the attempt did |
+### How a reading works
 
----
+People come with a question: who they married, how they died, whether to leave, what happened to
+their family, who they were before. The Oracle answers the question they asked, as a prophecy, not
+as a fixed speech — versatile in what it answers, consistent in how.
 
-## Repository layout
+**It predicts the way the story says it does.** The Oracle was built as a prediction engine, and in
+the world it foretells by finding the visitor in its archive: a life from 2126 with the same shape
+as the one in front of it, read back as theirs. `world.md` gives the model that framing, so every
+answer sounds read rather than invented, and carries the archive's out-of-date strangeness.
 
-```
-C:\theoracle\
-  README.md                  this file
-  config.yaml                every tunable setting          (in git)
-  .env                       OLLAMA_API_KEY                 (NEVER in git)
-  .env.example               the shape of .env, no secrets  (in git)
-  pyproject.toml             dependencies, Python pinned to TouchDesigner's
-  run.bat                    starts the engine
-  .gitignore
+**The record supplies the past.** A web result, if there is one, is treated as something that
+already happened, and the prophecy runs forward from it.
 
-  engine/
-    __main__.py              state machine, the visit loop
-    audio_in.py              recording, voice activity detection
-    stt.py                   speech to text
-    guard.py                 input screening, output validation
-    llm.py                   Ollama client, JSON schema
-    websearch.py             topic allowlist, query builder, sanitiser
-    corpus.py                loads the story material
-    session.py               per-visit state, compaction, sanitisation
-    tts.py                   speech synthesis, WAV output
-    bridge.py                WebSocket and OSC
-    prompts.py               prompt assembly per turn
-    schema.py                the response format
+**The fate sheet keeps it one life.** Each reply can declare lasting facts — married at
+thirty-four, two children, a trade — in its `fate` field. The engine stores them in `fate.json` and
+hands them back on every later turn as `<established>`. A visitor who asks about marriage, then
+children, then death hears three pages of the same book, not three unrelated fortunes.
 
-  stories/
-    instructions.md          who the Oracle is, how it speaks, what it refuses
-    world.md                 the setting, and how futures are built
-    stories.md               fragments and reference material
+`world.md` lists the kinds of question and the rule for each, including the rules for death, which
+nothing overrides.
 
-  voices/                    Piper voice files
-  scripts/
-    setup-shell.sh           environment variables for a new terminal
-    check_env.py             diagnostics
-    ollamaweb.py             web search smoke test
-    requirements-gpu.txt     what was installed outside pyproject.toml
-  td/
-    theoracle.toe            the TouchDesigner project
-    scripts/ws_callbacks.py
+| Visitor asks | Answer |
+| --- | --- |
+| "What is my future?" | Three movements: what they did, who was with them, how it ended |
+| "Who will I marry?" | Described by what they do or carry — never named |
+| "Will I have children?" | Whether, how many, one detail — never harm to a child |
+| "How do I die?" | Far off, peaceful or mythic, one sentence. Not given at all if the visitor seems distressed |
+| "Should I leave?" | A consequence, never a command |
+| "Who was I before?" | An invented person from the 2126 archive, never a real one |
+| "What happens to the world?" | Welcome — the present from the web, the rest from the archive |
+| "What happens to my mother?" | Declined in character; the Oracle reads what she left in *them* |
 
-  history/                   sanitised visit summaries      (in git or not - your call)
-  runtime/
-    sessions/<id>/           one live visit                 (not in git, deleted at end)
-      transcript.jsonl
-      responses/             raw web search results
-      audio/                 generated WAVs
-  logs/                      engine logs                    (not in git)
-  .venv/                     the Python environment         (not in git)
-```
+### How the origin is told
 
-### The story material
+A piece that recites its backstory to everyone who says hello has spent its best material on
+people who did not ask. So the history is rationed in two steps.
 
-`stories/` is where the piece actually comes from. The files are loaded at startup and placed in
-the model's system prompt — the trusted part, kept strictly separate from anything a visitor says.
+**The first time** a visitor asks what the Oracle is, where it came from, or how it was made, no
+model call happens. The engine plays a pre-recorded narration of about two minutes:
 
-- `instructions.md` — who the Oracle is, how it speaks, the shape of a visit, and everything it
-  refuses to do.
-- `world.md` — the setting, its images, and the rules for building somebody's future.
-- `stories.md` — fragments and reference material to draw from.
+| Visitor spoke | Plays |
+| --- | --- |
+| Finnish | `origin_fi_female.wav` or `origin_fi_male.wav`, chosen at random |
+| Spanish | `origin_es.wav` |
+| English, or any other language | `origin_en.wav` |
 
-Keep the total under roughly 4,000 tokens and it all fits in the prompt with room to spare. Beyond
-that the engine selects the most relevant fragments per visit instead.
+The Finnish choice is made once per visit, so the same visitor never hears both. The narration is
+then written into the session history as something the Oracle has already said, so the model will
+not repeat it.
 
-These two files are where you will do the actual artistic work. Almost everything about how the
-piece feels is in there, not in the Python.
+**If they ask anything further**, `origin.md` loads into the prompt and the model answers
+normally, from the full history, for the rest of that visit.
+
+Why a recording rather than a generated answer:
+
+1. **It is always right.** The origin is the one thing in the piece with a canonical text. A 4B
+   model improvising seven centuries of history will eventually get a date wrong, in front of the
+   one visitor who cared enough to ask.
+2. **No wait.** The longest answer becomes the fastest — playback starts at once, instead of after
+   four to six seconds, at the moment someone has leaned in.
+3. **No tokens.** The most expensive answer costs nothing.
+
+`corpus.py` detects the origin question with a keyword and pattern check across the exhibition's
+languages, and errs toward triggering.
+
+Two things worth deciding deliberately rather than by default:
+
+- **Swedish speakers hear the English recording.** Swedish is one of the main languages of the
+  piece. If you record a Swedish version, add `sv: [origin_sv.wav]` to `prerendered.origin` and it
+  is used automatically.
+- **A Finnish visitor may hear the origin in one voice and the rest of the visit in another**,
+  since the live Finnish Piper voice is a single voice. The world supports this — the Oracle holds
+  everyone who went inside the collective, and it would be odd if it had only one voice — but
+  listen to both combinations in the room before deciding whether to keep the random choice or
+  match the recording to the live voice.
+
+`origin_piper.md` is the source of truth for what the recordings say. If the text changes,
+re-record, and bring `origin.md` into line so a follow-up answer never contradicts the recording.
 
 ---
 
@@ -971,15 +1120,30 @@ flowchart LR
   B -.delete.-> E[raw directory gone]
 ```
 
-**1. During the visit** — `runtime/sessions/<id>/` holds the transcript, the raw web search
-results in `responses/`, and the generated audio. It is the only thing the prompt builder can
-read, which is what keeps visits sealed from each other.
+**1. During the visit** — `runtime/sessions/<id>/` holds everything, and it is the only place the
+prompt builder can read, which is what keeps visits sealed from each other:
 
-**2. On visit end** — the conversation is compacted into a short summary, and the web search
-results are cleaned into the paragraph of prose that was actually used.
+| File | What it holds |
+| --- | --- |
+| `transcript.jsonl` | Every turn: what the visitor said and what the Oracle replied |
+| `fate.json` | The established facts of the life the Oracle is foretelling — kept consistent across answers |
+| `responses/<n>_raw.json` | A web search result exactly as it came back |
+| `responses/<n>_clean.txt` | The same result cleaned: markup stripped, sensitive categories dropped, cut to one paragraph. **This is the only version the model ever sees** |
+| `audio/` | Generated WAVs |
 
-**3. Sanitise and move** — identifying material is stripped and the result is written to
-`history/`. The raw directory is deleted.
+**2. On visit end** — the conversation and the fate sheet are compacted into a short summary.
+
+**3. Sanitise and move** — identifying material is stripped and the summary is written to
+`history/`. The whole session directory is deleted, including every search result.
+
+**What survives of a web search:** only its *kind* — "weather", "news", "self: found", "self:
+nothing". Never its content. Nothing from the web is kept past the end of a visit.
+
+**The one exception is a short in-memory cache for world topics.** If two visitors ten minutes
+apart both get a weather reading, the second reuses the first result rather than searching again.
+It lives only in the engine's memory, never on disk, expires after `cache_minutes`, and is cleared
+on restart. **Self-searches are never cached** — a result about a person is used once, for the
+person who asked, and is gone with their visit.
 
 ### What is removed
 
@@ -1002,6 +1166,7 @@ results are cleaned into the paragraph of prose that was actually used.
 - archetype: a young person asking about work
 - topics: employment, a move, a sibling
 - mood arc: mysterious -> tense -> hopeful
+- reading asked for: marriage, then death
 - web topic used: weather
 - refusals: 0
 
@@ -1029,3 +1194,137 @@ automatic, and nothing identifying survives. Two things keep it that way:
 
 Web search adds one more line to that sign, because it is the one thing leaving the laptop. What
 leaves is a query the engine wrote about the weather or the city — never anything a visitor said.
+
+---
+
+## Configuration reference
+
+The settings most worth adjusting once it is running:
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `audio.silence_ms` | 800 | How long a visitor can pause before the engine stops listening. Lower feels snappier; too low cuts people off mid-thought |
+| `audio.preroll_s` | 2.0 | Audio kept from before the trigger, so the first word is not lost |
+| `stt.min_confidence` | 0.5 | Below this, the detected language is not trusted and the default is used |
+| `stt.allowed_languages` | fi, sv, en | Only languages you have a voice for. The engine picks the best-scoring one from this list |
+| `llm.num_predict` | 150 | Roughly 45 seconds of speech. Lowering it shortens both the reply and the wait |
+| `llm.temperature` | 0.8 | How much replies vary between visitors |
+| `conversation.max_turns` | 8 | Hard cap on a visit. Also the backstop against someone working at the model over many turns |
+| `conversation.context_turns` | 6 | How much of the visit the model sees. Lower is safer and cheaper; too low and it forgets their name |
+| `guard.max_per_minute` | 12 | Stops one person monopolising the piece |
+| `websearch.max_per_visit` | 2 | Searches per visit. One is usually enough — two details sound like a weather report |
+| `websearch.self_search.enabled` | true | Whether a visitor can ask to be looked up at all |
+| `websearch.self_search.narrow_questions` | 1 | Disambiguation attempts before the Oracle gives up gracefully |
+| `prerendered.origin` | fi / es / default | Which recording plays for which language on the first origin question |
+| `conversation.fate_max_entries` | 8 | How many facts of the foretold life the Oracle keeps track of per visit |
+| `llm.num_ctx` | 16384 | The model's context window. Never lower it below what the prompt needs — see Step 2 |
+| `tts.length_scale` | 1.0 | Speech speed. Above 1.0 is slower |
+
+Expect about **4–6 seconds** between a visitor finishing speaking and the first word of a generated
+reply, most of it the language model. This is normal and by design — the wait is covered by the
+visuals, which track the engine's state throughout. The origin recording is the one exception: it
+starts immediately.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `python -c "import sys..."` prints a different version than TouchDesigner | uv built the environment on the wrong Python | `rm -rf .venv`, correct the path in `scripts/setup-shell.sh`, redo Step 7 |
+| `Could not locate cudnn64_9.dll` or `cublas64_12.dll` | CUDA libraries not on PATH | Re-run `uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`. If it persists, use Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
+| An error mentioning cuDNN 8 | Version mismatch | `uv pip install --force-reinstall ctranslate2==4.4.0` |
+| A guide tells you to download Piper from `rhasspy/piper` | That repository is archived | Use `pip install piper-tts`, which is OHF-Voice/piper1-gpl — see Step 9 |
+| `ollama: command not found` | PATH not refreshed | Reopen PowerShell; if it persists, restart Windows |
+| Connection refused on port 11434 | Ollama server not running | Check the system tray, or start Ollama from the Start menu |
+| First visitor after a quiet spell waits 15 s | Model unloaded | Set `OLLAMA_KEEP_ALIVE=-1` and restart Ollama (Step 2e) |
+| TouchDesigner behaves strangely after linking the environment | NumPy version conflict | Make the `numpy` pin in `pyproject.toml` match what TouchDesigner reports, then `uv sync` |
+| The Oracle ignores rules it clearly has, or breaks character | The prompt is being cut to fit a too-small context window | Check `llm.num_ctx` is 16384 in `config.yaml` and that the engine sends it on every request |
+| Replies take far too long, or the JSON contains reasoning text | Thinking mode is on — it is the default for Qwen3.5 | Check `llm.think: false`, and that the engine passes `think=False` on every call |
+| `ollama pull qwen3.5:4b` fails | Ollama is too old for this model | Reinstall from ollama.com/download over the existing install |
+| Every reply takes several seconds longer than it should | The fixed part of the prompt is changing between turns, so Ollama rereads it | Keep `instructions.md` + `world.md` as an unchanging system message; put web results and `<established>` in the user message |
+| Out of graphics memory | TouchDesigner scene grew, or context window raised further | Measure with `scripts/check_env.py`. Setting `OLLAMA_KV_CACHE_TYPE=q8_0` saves a little more; beyond that, see Plan B in `TheOracleSystem.md` |
+| The Oracle contradicts itself across answers | Fate sheet not being passed back | Check `fate.json` is written after each reply and injected as `<established>` on the next turn |
+| Engine hangs for a minute at startup | Trying to reach Hugging Face with no network | Confirm `HF_HUB_OFFLINE=1` is in `run.bat` |
+| Engine cannot find the microphone | Device name does not match | Run `scripts/check_env.py`, copy the exact device-name fragment into `config.yaml` |
+| No voice after the screen went to sleep | Windows dropped the HDMI audio endpoint | Re-select the output in TouchDesigner; turn display sleep off on the show machine |
+| Origin question plays nothing | Recording missing or misnamed | Check the four files in `voices/prerendered/` match the names in `config.yaml` exactly |
+| Origin plays, then the Oracle tells it again | Narration not written to the session history | Check the prerendered handoff in `engine/__main__.py` records it as an Oracle turn |
+| A reply comes out in a language with no voice | Language added to `allowed_languages` before its voice | Remove it, or install the voice and add it to `tts.voices` |
+| Finnish transcribed as Estonian | Short utterance, uncertain detection | Normal. `min_confidence` catches it; adding Estonian with a voice turns it into a feature |
+| Whisper transcribes "Kiitos" from silence | Hallucination on near-empty audio | Set the mixer's gate properly — a hardware fix, not a software one |
+| Web search returns an auth error | Key missing or loaded too late | Check `.env`, and that `load_dotenv()` runs **before** `import ollama` |
+| Web search works in `ollamaweb.py` but not in the engine | Import order again | `load_dotenv()` must be the first thing `engine/__main__.py` does |
+| Visits never end | Sensor stuck, or silence timeout too long | Check `conversation.max_silence_s` and `end_on_sensor_clear_s`; `max_turns` is the backstop |
+| `history/` entries contain a name | Sanitisation failed or was disabled | Confirm `sanitize_on_end: true`, delete the affected files, check the name list covers that language |
+| `runtime/sessions/` is filling up | Sessions not being closed | Directories should be deleted at visit end. Check `keep_raw_sessions` is `false` |
+| The Oracle explains that it cannot do something | It refused in the wrong voice | Tighten the refusal examples in `stories/instructions.md` — a filter-sounding refusal breaks the piece more than the attempt did |
+| VCV Rack clicks when someone speaks | CPU contention | Should not happen with Whisper on the GPU. If you moved it to CPU, cap `cpu_threads` and raise VCV's ASIO buffer |
+
+---
+
+## Repository layout
+
+```
+C:\theoracle\
+  README.md                  this file
+  TheOracleSystem.md         the design document - why every choice was made
+  config.yaml                every tunable setting          (in git)
+  .env                       OLLAMA_API_KEY                 (NEVER in git)
+  .env.example               the shape of .env, no secrets  (in git)
+  pyproject.toml             dependencies, Python pinned to TouchDesigner's
+  run.bat                    starts the engine
+  .gitignore
+
+  engine/
+    __main__.py              state machine, the visit loop, prerendered handoff
+    audio_in.py              recording, voice activity detection
+    stt.py                   speech to text
+    guard.py                 input screening, output validation
+    llm.py                   Ollama client: qwen3.5:4b, think off, num_ctx 16384, JSON schema
+    websearch.py             world topics, self-search consent, category screen
+    corpus.py                loads the story material, detects origin questions
+    session.py               per-visit state, fate sheet, compaction, sanitisation
+    tts.py                   speech synthesis, WAV output
+    bridge.py                WebSocket and OSC
+    prompts.py               prompt assembly per turn
+    schema.py                the response format
+
+  stories/
+    instructions.md          who the Oracle is, how it speaks, what it refuses
+    world.md                 2813, the archive, and how futures are built
+    origin.md                the full history - loaded ONLY on a follow-up
+    origin_piper.md          canonical text of the spoken origin
+    lineage.md               the references behind the piece - never loaded
+    stories.md               fragments and reference material
+
+  voices/                    Piper voices, one .onnx + .onnx.json per language
+    prerendered/
+      origin_en.wav          English, and every language without its own recording
+      origin_es.wav          Spanish
+      origin_fi_female.wav   Finnish - one of these two, at random
+      origin_fi_male.wav
+
+  scripts/
+    setup-shell.sh           environment variables for a new terminal
+    check_env.py             diagnostics
+    ollamaweb.py             web search smoke test
+    requirements-gpu.txt     what was installed outside pyproject.toml
+  td/
+    theoracle.toe            the TouchDesigner project
+    scripts/ws_callbacks.py
+
+  history/                   sanitised visit summaries      (your call on git)
+  runtime/
+    sessions/<id>/           one live visit                 (not in git, deleted at end)
+      transcript.jsonl
+      fate.json              established facts of the foretold life
+      responses/             web results: <n>_raw.json and <n>_clean.txt
+      audio/                 generated WAVs
+  logs/                      engine logs                    (not in git)
+  .venv/                     the Python environment         (not in git)
+```
+
+`voices/` including `prerendered/` is committed. A show machine that needs the internet to speak
+goes silent when the gallery wifi drops. If the repository goes to GitHub, put `*.onnx` and `*.wav`
+under Git LFS rather than committing them directly.

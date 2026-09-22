@@ -1,0 +1,8 @@
+python >>> import sys, numpy
+python >>> print(sys.executable)
+C:/Program Files/Derivative/TouchDesigner/bin/python.exe
+python >>> print(sys.version)
+3.11.10 (heads/3.11-Derivative-dirty:e60cd070d8, Oct 10 2024, 15:55:11) [MSC v.1929 64 bit (AMD64)]
+python >>> print(numpy.__version__)
+2.1.2
+python >>> 

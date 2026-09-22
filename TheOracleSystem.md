@@ -5,7 +5,7 @@ Last revised 2026-09-20.
 
 For installation instructions, see [`README.md`](README.md). For the Oracle's voice and the
 world it speaks from, see [`stories/instructions.md`](stories/instructions.md) and
-[`stories/world.md`](stories/world.md).
+[`stories/world.md`](stories/world.md). The sources behind the piece are in [`stories/lineage.md`](stories/lineage.md).
 
 This document records not just what the system does but **why each choice was made and what it
 costs** — the reasoning is the point, since most of it is only obvious once you have hit the
@@ -57,7 +57,7 @@ flowchart LR
   M --> W[faster-whisper<br/>CUDA]
   W --> G[Guard +<br/>prompt builder]
   C[stories/*.md] --> G
-  G --> L[Qwen via Ollama<br/>JSON schema]
+  G --> L[qwen3.5:4b via Ollama<br/>JSON schema]
   L --> V[Validate]
   V --> P[Piper to WAV]
   P -->|response_ready| T[TouchDesigner]
@@ -94,9 +94,86 @@ The piece is now a **conversation**, not a single response, and it has a name. T
 | --- | --- | --- |
 | One utterance, one story | A visit of 4–8 exchanges | Multi-turn is where jailbreaks accumulate. Needs a turn cap and per-turn re-quoting |
 | Stateless, nothing kept | Session memory during a visit; a sanitised summary after | Personal data is on disk, briefly. Needs a retention design, not a good intention |
-| Web search off | On, for the world | One cloud dependency, and the piece is no longer fully offline |
+| Web search off | On — the world always, the visitor on consent | One cloud dependency, and the piece is no longer fully offline |
+| A nameless narrator | The Oracle: 2813, the last human creation | A whole fictional history to keep coherent, and a token budget problem (solved below) |
 
 The visit: a visitor opens with something random or testing, the Oracle answers obliquely, asks their first name, asks one thing about them, then tells them their life — what they did with it, who was with them, and how it ended. Then it closes the door.
+
+### The Oracle, and conditional prompt loading
+
+The year is 2813. The Oracle was the last thing humanity built — an archive of all human knowledge, fear and desire, and of everyone who had gone inside *the collective* — 97% of the population by 2120. A solar flare erased all of it in one second on 29 April 2126. A copy survived four hundred and fifty metres down at Olkiluoto, in a repository built to isolate nuclear waste for a hundred thousand years, powered by the waste itself, under a sign reading *this is not a place for life*. Its last input was a radio signal six months after the end: organic survivors, deep in the forest. Then almost seven hundred years of silence, until salvagers looking for scraps opened the door.
+
+The design consequence that matters here: **its model of humanity ends in 2126.** Every future it predicts is a 2813 farmer extrapolated from a 2126 office worker. That is why the piece's register is confident, specific and slightly wrong rather than vague and mystical — and it is also why the web search means something, because the Oracle is starved for a present it has no data on.
+
+It was never entirely voluntary. By 2090 the neural implant was law — fitted at birth, and retrofitted to everyone born before — imposed first by governments that called themselves protective and said openly that a person should not be allowed to bear too much freedom. Nobody built a way to record who wanted to be kept and who merely complied, which is one of the things the Oracle has spent six centuries failing to resolve. Since the finding it has also become a site of pilgrimage: people walk for weeks and leave offerings at the door; some kneel, some cry, most of them ask; and a priesthood has formed that writes down its answers and argues about them.
+
+The full history lives in `stories/origin.md` and is **loaded only when a visitor asks a follow-up about what the Oracle is.** This is a design decision on two counts:
+
+- **Pacing.** A piece that recites its backstory to whoever says hello has spent its best material on someone who did not ask. Most visitors should get a strange fortune and leave wondering; the history is the reward for curiosity.
+- **Reliability and cost.** Conditional loading is more dependable than instructing the model to withhold something present in its context, and it keeps the always-on prompt inside a comfortable range for `qwen3.5:4b`. `instructions.md` + `world.md` come to about 7,000 tokens; `origin.md` can be larger because it is only ever present on the turns that need it.
+
+`corpus.py` decides with a keyword and pattern check across the exhibition's languages, erring toward loading, and keeps it for the rest of that visit.
+
+### The origin answer is a recording
+
+The *first* origin question triggers no model call at all. The engine plays a pre-recorded narration of about two minutes — canonical text in `stories/origin_piper.md` — and writes it into the session history as something the Oracle has already said. `origin.md` loads only if the visitor asks something further.
+
+| Gain | Why it matters here |
+| --- | --- |
+| Canonical accuracy | A 4B model improvising a seven-century history will eventually get a date wrong, in front of the one visitor who cared enough to ask |
+| Zero latency | The longest answer becomes the fastest — playback starts immediately instead of after 4–6 s, at the moment someone has leaned in |
+| Zero tokens | The most expensive possible answer costs nothing, and the always-on prompt stays small |
+| Production freedom | A fixed asset can be any voice — including more than one |
+
+Four recordings exist, and routing is by the language Whisper detected:
+
+| Visitor spoke | Plays | Note |
+| --- | --- | --- |
+| Finnish | `origin_fi_female.wav` or `origin_fi_male.wav` | Random, chosen once per visit and remembered |
+| Spanish | `origin_es.wav` | |
+| English, or anything else | `origin_en.wav` | Includes Swedish — a deliberate gap worth revisiting |
+
+```yaml
+prerendered:
+  dir: voices/prerendered
+  origin:
+    fi: [origin_fi_female.wav, origin_fi_male.wav]
+    es: [origin_es.wav]
+    default: [origin_en.wav]
+```
+
+Adding a language is one line: record `origin_sv.wav`, add `sv: [origin_sv.wav]`. A list with more than one entry is chosen from at random, so any language can have several voices.
+
+**Two consequences to decide rather than inherit.** Swedish is one of the three main languages and currently gets the English recording. And a Finnish visitor may hear the origin in one voice and the rest of the visit in the single live Piper Finnish voice — possibly the other sex. The world absorbs this well (the Oracle holds everyone who went inside the collective; it would be stranger with only one voice), and `instructions.md` tells the model never to remark on it. But listen to both combinations in the room before settling it.
+
+**The recording is canonical.** `origin.md` and `world.md` have been aligned to its dates, figures and wording — 2090 for the law, 97% by 2120, the sign, the radio signal, the scraps — so a follow-up answer never contradicts what the visitor just heard. If the script changes, re-record and re-align.
+
+No new plumbing: this is an `audio_id` pointing at a fixed file rather than a generated one, so the TouchDesigner handshake is unchanged.
+
+### Readings: answering what they ask
+
+People arrive with a question — who they married, how they die, what became of their family, whether to leave, who they were before. The Oracle answers the question asked, as prophecy, rather than delivering one fixed speech. Versatility in *what* it answers, consistency in *how*.
+
+**It predicts the way the story says it does.** In the world, the Oracle was built as a prediction engine, and it foretells by finding the visitor in its archive: a life from 2126 with the same shape as the one in front of it, read back as theirs. `world.md` gives the model that framing, which does two jobs. Every answer sounds read rather than invented, and every answer carries the archive's out-of-date strangeness — a farmer's future told in the language of commutes and subscriptions.
+
+**The record is the past.** A cleaned web result — the world, or a consenting visitor's own trace — arrives as `<reference>` and is treated as something that has already happened. The prophecy runs forward from it. This is how a search result becomes part of the story rather than a fact read aloud.
+
+**The fate sheet keeps it one life.** The response schema gains one field, `fate`: short phrases under fixed keys (`work`, `love`, `family`, `home`, `turning`, `death`, `before`) for anything lasting the Oracle has just declared. The engine merges them into `runtime/sessions/<id>/fate.json` and injects the whole sheet as `<established>` on every later turn. A visitor who asks about marriage, then children, then death hears three pages of the same book. Capped at eight entries of twelve words, so it stays cheap.
+
+`fate` is model-written text derived partly from visitor speech, so it is treated as untrusted on the way back in: length-capped, stripped of markup and anything resembling an instruction, wrapped in its tag like everything else. It is never spoken, never sent to TouchDesigner, and it is deleted with the session — only the *kinds* of question survive into `history/`.
+
+Variety between visitors comes from the visitor, not a mechanism: what they say, what the record holds, and sampling at Qwen's recommended settings with `presence_penalty` 1.5 so recurring images do not harden into repetition. If rehearsal shows a small set of answers coming back too often, widen the image lists in `world.md` first.
+
+Reading types and the rule for each are in `stories/world.md`. The ones with hard limits:
+
+| Reading | Limit |
+| --- | --- |
+| Death | Far off, peaceful or mythic, one sentence, no cause — and **not given at all** if the visitor shows distress |
+| Marriage, partners | Described by what they do or carry, never named, sex never assumed |
+| Children | Whether, how many, one detail — never harm, illness or death of a child |
+| A decision | A consequence, never a command |
+| Another person's fate | Declined in character; the Oracle reads what that person left in the visitor |
+| Who they were before | Always an invented person from the archive, never a real one |
 
 ### Session memory, and its limits
 
@@ -109,28 +186,45 @@ Multi-turn does weaken the prompt-level defence, so two caps do real work:
 
 And the structural rule holds on every turn, not just the first: **prior visitor turns stay wrapped in `<visitor_speech>` tags**. Do not flatten the history into plain chat messages — that is exactly how a turn-2 instruction reframes turn 1.
 
-### Web search: the world, never the person
+### Web search: three cases, separated by consent
 
-The obvious design is to search the name the visitor just gave. That one does not survive a public room, and it is worth writing down why rather than rediscovering it during an opening:
+The Oracle's picture of humanity ends in 2126, so it is starved for the present. Real present-day detail, spoken flatly beside an invented future, is what makes the future feel like it came from somewhere real. That is what search is for.
 
-- Most searches on a common Finnish name return **a different person entirely**. The piece then narrates a stranger's life back at someone, with total confidence.
-- When it *is* them, the piece reads a private individual's employer, address, family news or court record aloud to a room.
-- Someone will give it an ex-partner's or a colleague's name. The installation becomes a doxxing tool with a PA attached.
-- It then predicts how that named real person dies.
+Who may be looked up is three separate questions, not one:
 
-So `engine/websearch.py` builds every query from a fixed `allowed_topics` list — weather, tide, date, season, city, trade, place, news. Visitor speech selects a *topic*; it is never interpolated into a query. The name is used for address only.
+| Target | Rule | Enforced by |
+| --- | --- | --- |
+| The world — weather, tide, date, city, trade, news | Always | `world_topics` allowlist; the engine writes the query, visitor speech never enters it |
+| **The visitor** | Explicit spoken consent | `require_consent`, one offer only, a clear yes; results pass a sensitivity screen |
+| **Anyone else they name** | Never | `third_party_search: false` — no code path builds a query from a name the visitor did not claim |
 
-This costs the piece nothing. Oracles are not uncanny because they researched you — they are uncanny because they know the present moment and reflect your own words back. "The wind turns south tonight and the ice will not hold past Thursday" next to an invented future is the whole trick, and it needs one real detail, not a dossier.
+**Self-search** is the visitor's own data and their own choice, and confronting someone with their own record is a legitimate thing for a piece like this to do. It needs three controls to stay that way. The offer says out loud that other people in the room will hear the result, because consenting to be found is not the same as consenting to a public reading. A clear affirmative is required — hesitation, a question or silence all count as no, and the offer is never repeated. And results are screened for criminal records, health matters, death notices, home addresses and financial detail before they reach the model; a visitor agreed to be found, not to have the worst page about them read aloud.
 
-Fetched pages are untrusted text, same as the transcript: wrapped in `<untrusted_reference>`, truncated to 2,000 characters, markup stripped, and never quoted verbatim or read aloud as a URL.
+Ambiguity is handled in character: several matches means **one** narrowing question — a place, a trade, a decade — and if it is still ambiguous the Oracle says so and moves on rather than guessing. Finding nothing is the common case, since a living 2813 person is absent from a 2126 archive, and `instructions.md` treats that as the best outcome rather than a failure.
+
+**Third parties are the line.** That person is not in the room and cannot consent. The obvious use — an ex-partner, a colleague, someone they argued with this morning — makes the piece a doxxing tool with a PA attached. And a name search returns a *different* person most of the time, so the piece would narrate a stranger's life and death back to the room with total confidence. The Oracle still speaks about people a visitor mentions; it does it from what they were told, which is the only honest source it ever had.
+
+That the third-party rule is **code rather than prompt** is the point. A prompt instruction is a request the model usually honours; a missing code path is a guarantee.
+
+Fetched pages are untrusted text, same as the transcript: wrapped in `<untrusted_reference>`, truncated to 2,000 characters, markup stripped, never quoted verbatim or read aloud as a URL.
 
 ### The data lifecycle
 
 Raw material exists only while someone is standing there.
 
+| During the visit, in `runtime/sessions/<id>/` | Holds |
+| --- | --- |
+| `transcript.jsonl` | Every turn, both sides |
+| `fate.json` | The established facts of the foretold life |
+| `responses/<n>_raw.json` | A web result as it came back |
+| `responses/<n>_clean.txt` | The same result, cleaned and cut to one paragraph — the only version the model sees |
+| `audio/` | Generated WAVs |
+
+**Nothing from the web outlives the visit.** Only its kind — `weather`, `news`, `self: found`, `self: nothing` — survives into `history/`. The single exception is an in-memory cache of *world* results, so two weather readings ten minutes apart do not search twice; it never touches disk, expires after `cache_minutes`, and clears on restart. **Self-search results are never cached**: a result about a person is used once, for the person who asked.
+
 ```mermaid
 flowchart LR
-  A[runtime/sessions/id/<br/>transcript, responses, audio] --> B[Compact<br/>on visit end]
+  A[runtime/sessions/id/<br/>transcript, fate, responses, audio] --> B[Compact<br/>on visit end]
   B --> C[Sanitise<br/>strip identifiers]
   C --> D[history/date/id.md]
   B -.delete.-> E[raw directory gone]
@@ -145,7 +239,8 @@ The redaction has one unusually strong property: **the Oracle asked for the name
 | Phone numbers, addresses, dates of birth, ID-shaped strings | Topics raised |
 | Emails, URLs | The mood arc across the visit |
 | The audio — deleted with the session | Which web topic was used, and whether anything was refused |
-| The raw web results | A short prose summary with no identifiers |
+| The raw and cleaned web results | A short prose summary with no identifiers |
+| The fate sheet | The kinds of question asked |
 
 What survives in `history/` is a record of **the piece's life rather than its visitors'** — enough to see who it is meeting and how it is behaving, with nothing that identifies anyone. That is what makes it safe to keep, and worth keeping.
 
@@ -163,7 +258,9 @@ The earlier five layers still hold. Multi-turn adds four more, and the important
 | No tools, no file access, no autonomous search | **Code** | The model cannot be talked into reading `history/` or searching a name |
 | Turn and context caps | **Code** | Slow accumulation across many turns |
 | Per-turn re-quoting of visitor history | **Structure** | A turn-2 instruction reframing turn 1 |
-| Topic allowlist for search | **Code** | Visitor speech reaching a query string |
+| Topic allowlist for world search | **Code** | Visitor speech reaching a query string |
+| `third_party_search: false` | **Code** | The piece becoming a way to look up someone not in the room |
+| Consent gate + category screen on self-search | **Code** | A visitor's worst page being read aloud to strangers |
 | In-character refusals | **Prompt** | The spell breaking — see below |
 
 That split matters. A prompt instruction is a request the model usually honours; a missing code path is a guarantee. Everything a visitor could most damagingly ask for — other people's words, the instructions, a search on a name — is blocked by the second kind.
@@ -180,23 +277,32 @@ The components are settled: `faster-whisper` for recognition, Qwen through Ollam
 
 | Component | Package | Device | VRAM |
 | --- | --- | --- | --- |
-| STT | `faster-whisper`, `large-v3-turbo`, `int8_float16` | CUDA | \~1.5 GB |
-| LLM | Ollama, `qwen3:4b` (Q4\_K\_M) | CUDA | \~3.3 GB + \~0.5 GB context |
+**Settled: both models on the GPU** — Whisper `large-v3-turbo` at `int8`, and `qwen3.5:4b`.
+
+The context window is part of this budget. The always-on prompt (`instructions.md` + `world.md`) is about 7,000 tokens, and the worst turn — a follow-up origin question late in a visit, with `origin.md`, history and a web result — reaches about 13,000. Ollama's default window is 4,096, so the engine sets `num_ctx: 16384` on every request, and that window's cache lives in VRAM.
+
+`qwen3.5:4b` is unusually cheap here. Of its 32 layers, 24 are Gated DeltaNet layers that keep a small fixed-size state regardless of context length; only 8 are full attention layers with a cache that grows (4 KV heads × 256 dims). That comes to roughly 32 KB per token, about a quarter of what `qwen3:4b` needed. The weights are larger, though — the model includes a vision encoder the piece does not use — so the total comes out about the same:
+
+| Component | Package | Device | VRAM |
+| --- | --- | --- | --- |
+| STT | `faster-whisper`, `large-v3-turbo`, `int8` | CUDA | \~1.0 GB |
+| LLM weights | Ollama, `qwen3.5:4b` | CUDA | \~3.4 GB |
+| Context cache, 16,384 tokens | 8 attention layers only | CUDA | \~0.5 GB |
+| Compute buffers | | CUDA | \~0.3 GB |
 | TTS | `piper-tts` (ONNX Runtime) | CPU | 0 |
 | VAD | Silero VAD | CPU | 0 |
 | Transport | `websockets`, `python-osc` | CPU | 0 |
-| **Subtotal** |  |  | **\~5.3 GB** |
-| TouchDesigner | your scene | CUDA | what's left: \~2.7 GB |
+| **Subtotal** | | | **\~5.2 GB** |
+| TouchDesigner | your scene | CUDA | \~2.8 GB |
 
-You want 3 GB held back for TouchDesigner, which makes the budget **5 GB for everything else** — and the table above lands at about 5.3 GB. That is over, not by much, but over. Three ways to close it, in the order I would try them:
+That is right at the line of your 3 GB reserve. `OLLAMA_FLASH_ATTENTION=1` is set as standard. If the measurement comes in over, `OLLAMA_KV_CACHE_TYPE=q8_0` halves the cache for about 0.25 GB back; beyond that, trim `world.md` before reaching for Plan B. Levers, in order:
 
 | Move | Frees | Costs |
 | --- | --- | --- |
-| Whisper `int8` instead of `int8_float16` | \~0.5 GB | Slightly lower accuracy; often not audible in the transcript |
-| Whisper on CPU (**Plan B**) | 1.5 GB | +1–2 s per transcription, and you have 16 GB of RAM doing nothing |
-| `qwen3:1.7b` instead of `4b` | \~2 GB | Thinner prose — test before dismissing it |
-
-**Settled: both models stay on the GPU.** Whisper `large-v3-turbo` at `int8`, `qwen3:4b` at Q4. That lands at roughly 4.8 GB and keeps your 3 GB reserve intact. The CPU option below stays documented as a fallback, not a plan.
+| `OLLAMA_KV_CACHE_TYPE=q8_0` | \~0.25 GB | Negligible |
+| Trim `world.md` so the worst turn fits in 12,288 tokens | \~0.1 GB, plus faster turns | Editing |
+| Whisper on CPU (**Plan B**) | \~1.0 GB | +1–2 s per transcription, CPU contention with VCV |
+| `qwen3.5:2b` instead of `4b` | roughly half the weights | Thinner prose — test before dismissing it |
 
 What actually matters is that the 3 GB is a **measured** reserve, not an assumed one. Check it at the end of Phase 1 and Phase 3 with the real scene running.
 
@@ -223,16 +329,15 @@ Raise VCV's ASIO buffer at the same time, and soak-test with the patch running r
 
 | Option | VRAM | Verdict |
 | --- | --- | --- |
-| `qwen3:4b` Q4, as now | \~3.3 GB | Fits with Whisper on the GPU already. No reason to move anything |
-| `qwen3:4b` Q8 | \~5.0 GB | A real quality step for the same model. Right at the edge of your 5 GB |
-| `qwen3:8b` Q4 | \~5.5 GB | Better storytelling, but eats \~0.5 GB of your reserve. Plausible with a light 2D scene |
+| `qwen3.5:4b`, as now | \~3.9 GB with cache | Fits with Whisper on the GPU already. No reason to move anything |
+| `qwen3.5:9b` | roughly twice the weights | Better prose, but does not fit beside a 3 GB reserve even with Whisper gone |
 | Nothing — just headroom | — | The safe answer, and it costs you nothing |
 
-**My recommendation: keep Whisper on the GPU.** Switching it to plain `int8` already gets you to \~4.8 GB and protects the full 3 GB. Moving to the CPU would spend a resource you have — VRAM, since the scene is light — to buy latency and audio-thread risk, which are the two things this design is actually short of.
+**My recommendation: keep Whisper on the GPU.** At plain `int8` it is about 1 GB, and the whole stack sits at the edge of your reserve without touching the CPU. Moving to the CPU would spend a resource you have — VRAM, since the scene is light — to buy latency and audio-thread risk, which are the two things this design is actually short of.
 
-The one good reason to do it is if Phase 3 shows `qwen3:4b`'s prose is not good enough and `8b` clearly is. Then you are buying story quality with about two seconds of latency and some VCV tuning, which is a fair trade — but make that call after hearing both models tell your stories, not before.
+The one good reason to do it would be a larger model, and at 8 GB there is no larger `qwen3.5` that fits even then. Moving Whisper to the CPU is a memory rescue, not a quality upgrade.
 
-**Do not use `qwen3:8b`.** Q4 puts it around 5.2 GB, which with Whisper leaves TouchDesigner under 1.5 GB. If you find 4B's storytelling too thin, the better move is a tighter prompt and richer corpus fragments, not a bigger model on a GPU that cannot hold it. Benchmark `qwen3:4b` against `qwen3:1.7b` too — for short atmospheric prose, the gap is smaller than you would guess, and 1.7B frees another 2 GB.
+**Do not use `qwen3.5:9b`.** It will not fit beside Whisper and TouchDesigner on this card. If `4b`'s writing feels thin, the better move is a tighter prompt and richer material in `world.md`, not a bigger model on a GPU that cannot hold it. Benchmark `qwen3.5:2b` too — for short spoken prose the gap is often smaller than you would guess, and it frees real memory.
 
 Set `OLLAMA_KEEP_ALIVE=-1` so the model stays resident between visitors. Without it Ollama unloads after 5 minutes idle, and the first visitor after a quiet spell waits 10+ seconds for a reload.
 
@@ -240,7 +345,7 @@ Run the voice engine in its own Python 3.11 virtualenv, **outside** TouchDesigne
 
 Piper stays on CPU deliberately. It is fast enough there and every megabyte of VRAM is spoken for.
 
-One packaging note: Piper moved to [OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl), published on PyPI as [`piper-tts`](https://pypi.org/project/piper-tts/) with a real Python API rather than the old download-a-binary approach. Pin the version; the pre-1.0 rhasspy binaries and the new package are not interchangeable.
+One packaging note: the original `rhasspy/piper` repository was **archived on 6 October 2025** and development moved to [OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl), published on PyPI as [`piper-tts`](https://pypi.org/project/piper-tts/) with a real Python API rather than the old download-a-binary approach. Pin the version; the old rhasspy binaries and the new package are not interchangeable. The voices are still hosted at `huggingface.co/rhasspy/piper-voices`. Not to be confused with [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper), which is the speech-recognition side.
 
 About the [be-more-hailo](https://github.com/moorew/be-more-hailo/) repo you linked: it is a good structural reference for separating STT, LLM and TTS into stages, and that is where its value ends for you. Its install and acceleration scripts target a Raspberry Pi 5 with Hailo hardware, and its documented default Whisper checkpoint is English-only — which would quietly break Finnish and Swedish. Read it for shape, write your own for this laptop.
 
@@ -316,8 +421,8 @@ Run three tiers:
 
 | Tier | Languages | What you commit to |
 | --- | --- | --- |
-| 1 | `fi`, `sv`, `en` | Voices auditioned, prompts tested, stories checked by a native speaker. Always resident in RAM |
-| 2 | \~7 more, e.g. `et`, `ru`, `uk`, `de`, `fr`, `es`, `ar` | Voice installed and working, lightly tested. Lazy-loaded on first use |
+| 1 | `fi`, `sv`, `en`, `es` | Voices auditioned, prompts tested, replies checked by a native speaker. Always resident in RAM. Spanish joins tier 1 because it has its own origin recording |
+| 2 | \~6 more, e.g. `et`, `ru`, `de`, `fr`, `it`, `ar` | Voice installed and working, lightly tested. Lazy-loaded on first use |
 | 3 | Everything else Whisper detects | No voice — reply in the default language |
 
 Pick tier 2 for your audience rather than by model quality. In a Helsinki gallery, Estonian, Russian and Ukrainian will show up more than Japanese.
@@ -334,11 +439,24 @@ More languages does mean more chances to mis-detect. Set `allowed_languages` to 
 
 ## Stage 3 — LLM layer
 
-Qwen through Ollama, locally, as the only generation path. Talk to it through the `openai` SDK pointed at `http://localhost:11434/v1` rather than Ollama's native REST API — same code, and if you ever do want a cloud fallback it becomes a one-line change of base URL.
+`qwen3.5:4b` through Ollama, locally, as the only generation path. Talk to it through **Ollama's own Python client** — the same `ollama` package that provides web search — rather than the OpenAI-compatible endpoint. The OpenAI endpoint cannot turn thinking off or set the context window per request, and this model needs both on every call:
 
 ```python
-client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+response = ollama.chat(
+    model="qwen3.5:4b",
+    messages=messages,
+    format=RESPONSE_SCHEMA,
+    think=False,                 # on by default in Qwen3.5 - must be off
+    keep_alive=-1,
+    options={
+        "num_ctx": 16384,        # the default 4096 silently cuts the instructions
+        "temperature": 0.7, "top_p": 0.8, "top_k": 20,
+        "presence_penalty": 1.5, "num_predict": 200,
+    },
+)
 ```
+
+This also removes a dependency: the `openai` package is no longer needed.
 
 ### Structured output, not free prose
 
@@ -355,7 +473,7 @@ Ask the model for JSON, not a bare paragraph. Ollama supports a JSON schema thro
 
 The model supplies only these two fields. It never supplies a filename, a path, a duration, a language code or a playback command — your application computes all of those. `mood` maps to artist-defined visual presets in TD, and an unknown value falls back to `calm` rather than being trusted.
 
-Use `qwen3` with **thinking disabled** (`/no_think` or the non-thinking mode). Reasoning tokens are latency you cannot afford and content the visitor never hears.
+**Thinking must be off.** Qwen3.5 reasons before answering by default. Reasoning tokens are latency you cannot afford and content the visitor never hears, and with a JSON schema they can end up where the spoken text should be. Pass `think=False` on every request; do not rely on prompt-level switches.
 
 ### Ollama web search
 
@@ -385,11 +503,28 @@ In both, the search step must be `await`-able with a hard 3 s timeout and an emp
 
 Split the Markdown by role, following the structure in your notes:
 
-- `instructions.md` — narrator voice, form, length, boundaries. Goes in the system prompt verbatim.
-- `world.md` — setting, characters, facts. System prompt.
-- `stories.md` — fragments to transform. Selected from.
+| File | Role | In the prompt |
+| --- | --- | --- |
+| `instructions.md` | Voice, visit shape, lookups, guardrails, output format | Always — system message |
+| `world.md` | 2813, the archive, readings, the rules for death | Always — system message |
+| `origin.md` | Full history | Only on an origin follow-up — user message |
+| `origin_piper.md` | Script of the recorded origin | Never |
+| `lineage.md` | Sources behind the piece | Never — kept in its own file so it cannot be loaded by accident |
+| `stories.md` | Fragments | Selected by keyword overlap (`rank_bm25`) if it grows |
 
-For a corpus under \~4,000 tokens, load it whole into the system prompt — well within `qwen3:4b`'s context and far simpler than retrieval. Past that, select 2–3 fragments by keyword overlap using `rank_bm25`. You do not need embeddings or a vector database at this scale, and leaving them out removes a dependency from the show machine.
+**Order matters for speed.** Ollama reuses its cache for the longest unchanged prefix of the previous prompt. Keep the system message — `instructions.md` then `world.md` — byte-for-byte identical on every request, and put every variable block after it, in the turn's user message:
+
+```text
+SYSTEM   instructions.md + world.md                 fixed, cached after the first visit
+USER     <established>…</established>              fate sheet so far
+         <reference>…</reference>                   cleaned web result, if any
+         <origin>…</origin>                         only on an origin follow-up
+         <visitor_speech>…</visitor_speech>
+```
+
+A variable block placed inside the system message invalidates the cache, and every turn then pays to reprocess about 7,000 tokens — two to four seconds on a laptop GPU, straight onto a latency budget that is already four to six.
+
+**The context window is set on every request.** `options.num_ctx: 16384`, sent by `llm.py` each time. When a prompt exceeds the window, Ollama trims rather than failing loudly, so a too-small window looks like a working piece that has quietly lost part of its guardrails.
 
 The application decides which files are read. The model cannot request a path.
 
@@ -397,11 +532,13 @@ The application decides which files are read. The model cannot request a path.
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `temperature` | 0.8 | Stories should vary between visitors |
+| `temperature` / `top_p` / `top_k` | 0.7 / 0.8 / 20 | Qwen's recommended non-thinking settings |
+| `presence_penalty` | 1.5 | Recommended; stops the recurring images from turning into repetition |
 | `num_predict` | 200 | Caps the worst case |
 | `format` | the JSON schema | Parse-or-reject |
-| think | off | Latency |
-| history | none | Every visitor starts clean |
+| `think` | `False` | Latency, and keeping reasoning out of the spoken text |
+| `num_ctx` | 16,384, per request | Fits the worst turn — see the VRAM table |
+| history | this visit only, last `context_turns` | Continuity inside a visit, nothing between visits |
 
 ## Stage 4 — Guardrails and prompt injection defense
 
@@ -586,113 +723,99 @@ At 22 kHz mono 16-bit, a 20-second story is about 880 KB. Even keeping a full da
 
 ## Audio hardware and signal flow
 
-One constraint decides this whole layout: **on Windows, only one application can own the CQ-12T at a time.** Allen & Heath require their [ASIO driver](https://support.allen-heath.com/hc/en-gb/articles/19338440353425-CQ-Multitrack-streaming-using-CQ) for multitrack USB on Windows, ASIO is single-client, and A&H state plainly that the WDM driver [cannot remap outputs to specific USB channels](https://support.allen-heath.com/hc/en-gb/articles/4403658837009-General-Windows-USB-Audio-Drivers-understanding-and-troubleshooting). So WDM gives you the main stereo pair and nothing more.
+One constraint decides the layout: **on Windows, only one application can own the CQ-12T at a time.** Allen & Heath require their ASIO driver for multitrack USB, ASIO is single-client, and A&H state plainly that the WDM driver cannot remap outputs to specific USB channels — so WDM gives you the main stereo pair and nothing more.
 
-You have three programs wanting audio — VCV Rack, TouchDesigner, Python. Only one can have the multichannel USB. **Give it to VCV Rack**, because it is the only one that needs discrete outputs per monitor. Then route the other two through the mixer as ordinary audio, which is what the mixer is for.
+Three programs want audio. **Give the mixer to VCV Rack**, because it is the only one needing discrete outputs per monitor. The voice does not touch the mixer at all.
 
 ```mermaid
 flowchart LR
   MIC[Microphone] --> CH1[CQ ch1<br/>HPF gate comp]
-  CH1 --> AUX[CQ Out 6<br/>mic only]
-  AUX --> DONG[USB input<br/>dongle]
+  CH1 --> AUX[CQ Out 5<br/>mic only]
+  AUX --> DONG[USB dongle]
   DONG --> PY[Python<br/>Whisper]
-  PY --> TD[TouchDesigner<br/>plays WAV]
-  TD --> DAC[USB DAC]
-  DAC --> ST[CQ stereo in]
+  PY --> TD[TouchDesigner]
+  TD -->|HDMI| SCR[Centre screen<br/>+ its speakers]
   VCV[VCV Rack Pro] -->|USB ASIO| RET[CQ USB<br/>returns 1-4]
-  ST --> MIX[CQ output mixes]
-  RET --> MIX
-  MIX --> SPK[Outs 1-5<br/>4 monitors + screen]
+  RET --> MIX[CQ Out 1-4]
+  MIX --> SPK[4 monitors<br/>around the room]
   TD -.OSC.-> VCV
 ```
 
-The CQ-12T has 10 mic/line inputs, a stereo TRS input, 2 XLR main outs, 6 TRS monitor outs and a 16×16 USB interface at 48/96 kHz — far more than this piece needs, which is comfortable rather than wasteful. [CQ-12T specs](https://www.allen-heath.com/hardware/cq/cq-12t/)
+The CQ-12T has 10 mic/line inputs, a stereo TRS input, 2 XLR main outs, 6 TRS monitor outs and a 16×16 USB interface at 48/96 kHz — considerably more than this needs, which is comfortable rather than wasteful. [CQ-12T specs](https://www.allen-heath.com/hardware/cq/cq-12t/)
+
+### The voice goes out HDMI
+
+This reverses my earlier recommendation, and the reasoning is worth keeping because the reversal is instructive.
+
+HDMI audio does not avoid latency — it **adds** 40–150 ms. What it avoids is the *echo*. The earlier design had the voice playing from the mixer and the screen simultaneously: two clock domains, two arrival times at the visitor, an audible slap-back from the centre of the room. That was a real problem. Playing from one place only dissolves it completely, and the added latency is irrelevant inside a response that already takes four to six seconds.
+
+What the change buys:
+
+| Gain | Detail |
+| --- | --- |
+| No USB DAC | One less device and cable in the rig |
+| Correct localisation | The voice comes from the screen — the thing talking to you is in front of you, while VCV's bed moves around the four surrounds |
+| Two mixer outputs freed | Out 6 and the mains are now spare |
+| Analysis unaffected | TouchDesigner still plays the file, so the Audio File In CHOP and its envelope still drive the visuals |
+
+Two operational cautions. Windows drops the HDMI audio endpoint when the display sleeps or is re-plugged, and TouchDesigner then needs its output device re-selected — **disable display sleep and USB selective suspend on the show machine.** And the screen's built-in speakers are small and mid-heavy; audition the Finnish voice through them specifically, because that is what every visitor actually hears. If they disappoint, a small powered speaker behind the screen on CQ Out 5 is the fallback, and the echo problem does not return as long as only one of the two is ever active.
 
 ### Why the mic goes through the mixer first
 
-This is the part that will surprise you: **routing the mic through the CQ before Python sees it is probably the single biggest accuracy win available to you.** The channel strip gives you a proper preamp, a high-pass filter, a noise gate and a compressor, in hardware, on the signal before Whisper ever touches it.
+**Routing the mic through the CQ before Python sees it is the single biggest accuracy win available.** The channel strip gives a proper preamp, a high-pass filter, a noise gate and a compressor, in hardware, before Whisper touches the signal.
 
-- **High-pass at 80–120 Hz** removes HVAC rumble and footsteps that Whisper otherwise tries to interpret.
-- **The gate** kills room tone between visitors. This is what stops Whisper hallucinating "Kiitos." into silence — a much better fix than the software `no_speech_prob` check, which is now your second line of defence rather than your first.
-- **The compressor** evens out the visitor who leans into the mic and the one who stands back a metre. Whisper is noticeably better on consistent levels.
+- **High-pass at 80–120 Hz** removes rumble and footsteps that Whisper otherwise tries to interpret.
+- **The gate** kills room tone between visitors. This is what stops Whisper hallucinating "Kiitos." into silence — a better fix than the software `no_speech_prob` check, which becomes the second line of defence rather than the first.
+- **The compressor** evens out the visitor who leans in and the one who stands back.
 
-A mic on a stand that visitors are encouraged to speak closely into is the best case for all of this — high signal-to-noise, consistent distance, and the proximity effect giving you body on quiet speakers. With a quiet soundscape too, you can set the gate fairly low and use gentle compression (3:1, a few dB of reduction) rather than fighting the room. Expect noticeably better Whisper accuracy than the two-metre hidden-mic case, which is where most installations end up.
-
-Still set the gate with the monitors at show level, not in a silent room. And add a windscreen — people speaking close to a mic produce plosives, and a popped P is a word Whisper loses.
+A stand mic that visitors are encouraged to speak closely into is the best case for all of this: high signal-to-noise, consistent distance, proximity effect giving body to quiet speakers. With a quiet soundscape you can set the gate low and compress gently (3:1, a few dB). Set it with the monitors at show level, not in a silent room, and add a windscreen — close speech produces plosives, and a popped P is a word Whisper loses.
 
 ### Getting the mic back to Python
 
-VCV owns the USB, so the mic cannot come back that way. Assign **TRS Out 6** as a mix containing channel 1 only, and feed it into a small dedicated USB input that Python owns exclusively — a €30 class-compliant interface is plenty for a 16 kHz mono speech feed.
+VCV owns the USB, so the mic cannot return that way. Assign **TRS Out 5** as a mix containing channel 1 only, into a cheap class-compliant USB input that Python owns exclusively.
 
-That aux mix contains **only the mic**. Neither the voice nor VCV's output is in it, so the installation physically cannot transcribe itself even if the software's mic-gating logic fails. A hardware guarantee beats a software one.
+That aux mix contains **only the microphone**. Neither the voice nor VCV's output is in it, so the installation physically cannot transcribe itself even if the software's mic-gating logic fails. A hardware guarantee beats a software one.
 
-### Getting the voice to all five outputs
-
-TouchDesigner plays the WAV to a small USB DAC; its analog output goes into the CQ's stereo TRS input. In the mixer, send that channel to monitor mixes 1–5 at unity. Done — the voice is on every output, and the level, EQ and any compression live on a physical fader you can adjust during the show without touching code.
-
-This avoids virtual audio cables entirely on the voice path. No VB-Cable, no shared clock, no resampling, no app fighting another app for a device. One analog cable replaces a whole category of Windows audio problems, and for a synthetic voice the extra DA/AD conversion is inaudible.
+Never route the microphone to any monitor mix. There is no artistic reason to amplify the visitor, and it puts an open mic a few metres from four speakers.
 
 ### Patch sheet
 
 | CQ connector | Carries | Routed to |
 | --- | --- | --- |
-| Input 1 (XLR) | Microphone | Out 6 only — never to the monitors |
-| Stereo TRS input | Voice from TD's USB DAC | Mixes 1–5 at unity |
-| USB returns 1–4 | VCV Rack generative audio | Mixes 1–4, one per monitor |
-| TRS Out 1–4 | Monitors 1–4 | — |
-| TRS Out 5 | Speaker at the screen | — |
-| TRS Out 6 | Mic-only feed | USB dongle → Python |
-| Main XLR L/R | Spare — recording, or a house PA | — |
+| Input 1 (XLR) | Microphone | Out 5 only — never to the monitors |
+| USB returns 1–4 | VCV Rack generative audio | Out 1–4, one per monitor |
+| TRS Out 1–4 | Four monitors around the room | — |
+| TRS Out 5 | Mic-only feed | USB dongle → Python |
+| TRS Out 6, Main XLR | Spare | Recording, or a fallback centre speaker |
 
-Never route the microphone to any monitor mix. There is no artistic reason to amplify the visitor, and doing it puts an open mic a few metres from four speakers.
-
-### The HDMI screen is a separate problem
-
-Your portable screen's audio comes from the laptop's GPU, not the mixer. Nothing on the CQ can reach it. So the voice would have to be rendered twice — once to the DAC and once to the HDMI endpoint — in two clock domains with different latencies. HDMI audio typically runs 40–150 ms behind. With four monitors around the room and the screen in the centre, that is an audible slap-back from the middle of the space, and it is not fixable by turning something down.
-
-**Recommendation: mute the HDMI audio and put a small powered speaker at the screen, fed from TRS Out 5.** You have the output spare, everything stays in one clock domain, and it sounds better. The screen becomes visual-only.
-
-If the screen's own speaker is artistically required, measure the offset with a clap test and compensate with output delay on the CQ's other five outputs so everything lands together. Budget an afternoon for it.
-
-### The centre is the right place for the voice
-
-With four monitors around the visitor and the screen in the middle, you have a genuinely good spatial layout, and it suggests a cleaner split than putting the voice equally on all five:
-
-| Source | Where | Why |
-| --- | --- | --- |
-| The voice | Centre speaker, strong; the four surrounds at −10 to −15 dB | It localises to the screen — the thing talking to you is in front of you, not everywhere |
-| VCV's generative bed | The four surrounds, discrete | The world around the visitor, free to move |
-
-Equal level on five speakers surrounding one person is the one thing I would avoid. The visitor stands at different distances from each, so the same words arrive at slightly different times from five directions. That smears localisation and comb-filters the consonants — and consonants are exactly what carries Finnish. A dominant centre with quiet surrounds sounds bigger *and* clearer than five equal speakers, which is counterintuitive but reliably true.
-
-It is a one-fader experiment on the CQ: set up both and listen from where a visitor stands. If you prefer the five-equal version artistically, keep it — just make the choice by ear rather than by default.
+Not on the mixer at all: the voice, which goes TouchDesigner → HDMI → the centre screen.
 
 ### VCV Rack and TouchDesigner talking
 
-Audio and control are separate paths, and they should stay that way.
+Audio and control are separate paths and should stay that way.
 
 | Path | Carries | How |
 | --- | --- | --- |
 | VCV → CQ | Generative audio, 4 discrete channels | USB ASIO, Audio-16 module |
 | TD → VCV | State, mood, duck level, `char_count` | OSC over localhost |
-| TD → CQ | The voice | USB DAC → stereo input, analog |
+| TD → screen | The voice | HDMI, direct |
 
-For the OSC side, use a module that maps OSC to CV — stoermelder's **OSC'elot** or Trowa's **cvOSCcv**. Send the same `state` and `mood` your visuals use, and VCV's patch becomes another instrument reading the piece's state machine.
+For the OSC side, use a module that maps OSC to CV — stoermelder's **OSC'elot** or Trowa's **cvOSCcv**. Send the same `state` and `mood` the visuals use, and VCV's patch becomes another instrument reading the piece's state machine.
 
-You said the soundscape is quiet enough not to need ducking, and with a close-talked mic on a stand I think you're right that it is not critical. I'd still wire a **gentle** one — 3–6 dB, not a hard mute — on the `speaking` state, released on `playback_finished`. It costs one VCA and one OSC message, and it protects the Finnish consonants that a quiet bed can still mask. Easy to set to zero if you don't like it; much less easy to add during install week.
+You said the soundscape is quiet enough not to need ducking, and with a close-talked mic that is probably right. I would still wire a **gentle** one — 3–6 dB, not a hard mute — on the `speaking` state, released on `playback_finished`. It costs one VCA and one OSC message, and it protects the Finnish consonants a quiet bed can still mask. Easy to set to zero; much less easy to add during install week.
 
-Derivative have a [tutorial on running VCV Rack with TouchDesigner](https://derivative.ca/community-post/tutorial/setting-audiovisual-performance-vcv-rack-and-touchdesigner/62724) that covers the OSC side; note that it routes audio between the two with VB-Audio Cable, which this design deliberately avoids by going through the mixer instead.
+Derivative have a [tutorial on running VCV Rack with TouchDesigner](https://derivative.ca/community-post/tutorial/setting-audiovisual-performance-vcv-rack-and-touchdesigner/62724) covering the OSC side; note it routes audio between the two with VB-Audio Cable, which this design avoids by keeping the two signal paths physically separate.
 
 ### If you'd rather not buy the USB dongle
 
-Two fallbacks, both with caveats worth knowing before you rely on them:
+Two fallbacks, both with caveats worth knowing before relying on them:
 
 | Approach | How | Risk |
 | --- | --- | --- |
-| CQ's WDM input alongside VCV's ASIO output | Python opens the CQ's main stereo pair over WASAPI while VCV holds ASIO | May work, may not — A&H don't document simultaneous ASIO + WDM use. Test it in Phase 0; if it holds for four hours it holds |
-| Multi-client ASIO layer | ASIO Link Pro or Voicemeeter Potato owns the hardware and hands virtual devices to each app | Adds a moving part between your piece and its speakers. Fine for a studio, less so for something running unattended for weeks |
+| CQ's WDM input alongside VCV's ASIO output | Python opens the CQ's main stereo pair over WASAPI while VCV holds ASIO | May work, may not — A&H don't document simultaneous ASIO + WDM. Test it in Phase A; if it holds for four hours it holds |
+| Multi-client ASIO layer | ASIO Link Pro or Voicemeeter Potato owns the hardware and hands virtual devices to each app | Adds a moving part between the piece and its speakers. Fine for a studio, less so for something unattended for weeks |
 
-The dongle costs less than an hour of debugging either of these.
+The dongle costs less than an hour of debugging either.
 
 ## TouchDesigner integration
 
@@ -739,10 +862,13 @@ Every message carries `protocol_version`, and session-scoped messages carry `ses
  "char_count": 44,
  "word_count": 7,
  "mood": "mysterious",
+ "reading": "love",
  "audio_id": "e50f7cfa4ea14a5387a91f45a324e179",
  "audio_duration_seconds": 3.6,
  "audio_sample_rate": 22050}
 ```
+
+`reading` is the kind of question the engine classified (`life`, `love`, `family`, `work`, `death`, `decision`, `before`, `world`, `other`). `fate` from the model's JSON is deliberately **not** forwarded to TouchDesigner: it is internal state, and nothing that is not spoken should reach a screen.
 
 `char_count` is **the length value you asked for**. Compute it in Python from the final normalised spoken text as Unicode code points — not from anything the model claims. `audio_duration_seconds` is WAV frames ÷ sample rate, measured, not estimated. `word_count` is whitespace-split, which is honest for Finnish, Swedish and English and would not be for Thai or Chinese.
 
@@ -785,7 +911,7 @@ Playing a complete file instead of streaming sentences costs real time, and I wa
 | Whisper (GPU, turbo) | 0.3–0.8 s | Plan B on CPU int8: 1.5–2.5 s |
 | Guard screen | < 5 ms | Regex only |
 | Web search, if gated | 0–3 s | Hard timeout; skip entirely in the pre-seeded shape |
-| Qwen full response | 2.5–4 s | `qwen3:4b` at \~50 tok/s × 150 tokens, GPU shared with TD |
+| Qwen full response | 2.5–4 s | `qwen3.5:4b`, thinking off, \~150 tokens, GPU shared with TD. Estimate — measure in Phase 3 |
 | Validation | < 10 ms | Schema parse plus checks |
 | Piper synthesis | 0.3–0.8 s | Whole response, CPU |
 | File write + rename | < 50 ms |  |
@@ -797,10 +923,10 @@ The LLM is now the dominant cost, and it is the only place worth optimising. Wha
 | Change | Saves | Costs |
 | --- | --- | --- |
 | `num_predict` 150 → 100 | \~1 s | Shorter stories — often an improvement for spoken work |
-| `qwen3:4b` → `qwen3:1.7b` | \~1.5 s | Thinner prose; test before dismissing it |
-| Thinking mode off | 2–5 s | Nothing. Do this regardless |
+| `qwen3.5:4b` → `qwen3.5:2b` | \~1 s | Thinner prose; test before dismissing it |
+| Thinking mode off | 2–5 s | Nothing. Required regardless — it is on by default in Qwen3.5 |
 | Pre-seeded web search | up to 3 s | Less responsive to the visitor's specific words |
-| Whisper GPU over CPU | \~1.5 s | 1.5 GB VRAM from TouchDesigner |
+| Whisper GPU over CPU | \~1.5 s | \~1 GB VRAM from TouchDesigner |
 
 Four to six seconds is not fatal, but it only works if the wait is **designed**. An unexplained pause reads as broken; a visible one reads as the piece thinking. You have good material for this: `state` changes on every transition, `mic_level` reacts live while they speak, and the `transcript` event arrives 3–4 seconds before the audio does — so you can put the visitor's own words on screen, in their own language, while Qwen works. That single move does more for perceived latency than any model change in the table above.
 
@@ -869,7 +995,6 @@ requires-python = "==3.11.*"        # match TD exactly
 dependencies = [
   "piper-tts>=1.3",
   "ollama>=0.6",
-  "openai>=1.40",
   "sounddevice>=0.4.6",
   "websockets>=12",
   "python-osc>=1.8",
@@ -913,7 +1038,7 @@ Note that `OLLAMA_KEEP_ALIVE` does **not** belong in this file. It is read by th
 
 ## Setup runbook
 
-One repository, `theoracle`, holding everything — engine, stories, voices, TD project, scripts. Steps run in order; several later ones fail confusingly if an earlier one was skipped. Ollama and `qwen3:4b` are already installed on your machine, so step 6 is a verification rather than an install.
+One repository, `theoracle`, holding everything — engine, stories, voices, TD project, scripts. Steps run in order; several later ones fail confusingly if an earlier one was skipped. Step 7 pulls `qwen3.5:4b` and checks that thinking is off.
 
 Every command below says which shell it runs in and which directory you are in. Unless stated otherwise, you are in `/c/theoracle` in Git Bash.
 
@@ -1018,7 +1143,6 @@ requires-python = "==3.11.*"        # match TD exactly
 dependencies = [
   "piper-tts>=1.3",
   "ollama>=0.6",
-  "openai>=1.40",
   "sounddevice>=0.4.6",
   "websockets>=12",
   "python-osc>=1.8",
@@ -1071,17 +1195,20 @@ The first run downloads \~1.6 GB to the Hugging Face cache. Do this on your own 
 
 Record both `uv pip` lines in `scripts/requirements-gpu.txt` with a comment saying why. They are invisible to `uv sync`, so the show machine will not reproduce them otherwise.
 
-### Step 7 — Ollama: verify what you already have
+### Step 7 — Ollama and qwen3.5:4b
 
 Any shell:
 
 ```bash
+ollama pull qwen3.5:4b              # ~3.4 GB; update Ollama first if it refuses
 ollama list
-ollama run qwen3:4b "Kerro yhden lauseen tarina merest\u00e4."
-curl http://localhost:11434/v1/models
+ollama run qwen3.5:4b --think=false "Kerro yhden lauseen tarina merestä."
+curl http://localhost:11434/api/tags
 ```
 
-The third matters most — it confirms the **OpenAI-compatible endpoint** is live, which is what the engine talks to. Then set `OLLAMA_KEEP_ALIVE=-1` as a Windows user environment variable and restart Ollama.
+**Check the reply has no reasoning block in front of it.** Qwen3.5 thinks by default; `--think=false` is the CLI switch, and the engine passes `think=False` on every request. If `--think` is not recognised, Ollama is too old for this model — reinstall from ollama.com/download.
+
+Then set two Windows user environment variables and restart Ollama: `OLLAMA_KEEP_ALIVE=-1` and `OLLAMA_FLASH_ATTENTION=1`. The context window needs no Modelfile — the engine sends `num_ctx: 16384` with each request through the native `ollama` client.
 
 Read that Finnish reply carefully. If it sounds translated rather than written, that is your Phase 3 finding arriving early, and useful to know now.
 
@@ -1200,8 +1327,8 @@ Everything the piece needs is inside `C:\theoracle` — code, stories, voices, T
 
 ```yaml
 audio:
-  input_device: "USB Audio CODEC"    # the dongle on CQ Out 6, substring match
-  output_device: "USB Audio DAC"     # the DAC feeding CQ stereo in
+  input_device: "USB Audio CODEC"    # the dongle on CQ Out 5, substring match
+  output_device: "HDMI"              # the centre screen's own speakers
   silence_ms: 800
   max_utterance_s: 20
   speech_start_timeout_s: 8
@@ -1212,11 +1339,16 @@ stt:
   device: cuda                 # cuda | cpu  (Plan B)
   compute_type: int8           # settled - keeps the 3 GB reserve
   min_confidence: 0.5
-  allowed_languages: [fi, sv, en]
+  allowed_languages: [fi, sv, en, es]   # grow to ~10; add only once each voice is installed
   default_language: fi
 llm:
-  base_url: http://localhost:11434/v1
-  model: qwen3:4b
+  host: http://localhost:11434
+  model: qwen3.5:4b
+  think: false                 # MUST stay false - on by default in Qwen3.5
+  num_ctx: 16384               # MUST be set - default 4096 cuts the instructions
+  top_p: 0.8
+  top_k: 20
+  presence_penalty: 1.5
   think: false
   num_predict: 150
   temperature: 0.8
@@ -1227,17 +1359,23 @@ websearch:
   timeout_s: 3                 # hard cap; a slow search is skipped, never waited on
   max_chars: 2000
   max_per_visit: 2
-  cache_minutes: 30
-  allowed_topics:              # the only things that can be searched
-    [weather, tide, date, season, city, trade, place, news]
-  # Visitor speech selects a topic. It is never interpolated into a query.
+  cache_minutes: 30            # world topics only, in memory only
+  world_topics: [weather, tide, date, season, city, trade, place, news]
+  self_search:
+    enabled: true
+    require_consent: true      # MUST stay true
+    offer_once: true
+    narrow_questions: 1
+    cache: false               # MUST stay false
+    drop_categories: [criminal, health, death_notice, home_address, financial]
+  third_party_search: false    # MUST stay false
 conversation:
   max_turns: 8
   max_silence_s: 12
   end_on_sensor_clear_s: 5
   context_turns: 6
 tts:
-  voices: {fi: fi_FI-harri-medium, sv: sv_SE-nst-medium, en: en_GB-alba-medium}
+  voices: {fi: fi_FI-harri-medium, sv: sv_SE-nst-medium, en: en_GB-alba-medium, es: <from voice list>}
   length_scale: 1.0
   output_dir: runtime/audio
   max_duration_s: 45
@@ -1288,7 +1426,7 @@ Eight phases. Two ordering rules: **prove the audio hardware before any software
 | 5 | `audio_in.py` + state machine, wired to Phase 0 | Full loop from a keyboard trigger; per-stage latency logged | 1 day |
 | 6 | Sensor, cancellation, deadlines, recovery, `websearch.py` if used | Cancel during every stage; unplug the sensor; kill Ollama mid-generation; all recover to idle | 1–2 days |
 
-**Measure VRAM at the end of Phase 1 and Phase 3, with TouchDesigner running.** That is the moment you learn whether `qwen3:4b` and GPU Whisper actually coexist with your scene, and it is much cheaper to find out then than in Phase 6.
+**Measure VRAM at the end of Phase 1 and Phase 3, with TouchDesigner running.** That is the moment you learn whether `qwen3.5:4b` and GPU Whisper actually coexist with your scene, and it is much cheaper to find out then than in Phase 6.
 
 Build Phase 4 before Phase 5. Once the loop is live and fun to demo, guardrails feel like a chore and get postponed. Writing the attack test file while the module is fresh takes an hour; retrofitting it after the piece is installed takes a day and you will do it badly.
 
@@ -1298,7 +1436,7 @@ Then a **soak test**: four hours, triggering every 30 seconds, with the real vis
 
 ### The four that will actually bite
 
-**VRAM contention.** 8 GB split three ways is the tightest part of this design. Whisper plus `qwen3:4b` leaves TouchDesigner under 3 GB. If your scene needs more, Plan B (Whisper on CPU) is the release valve, and `qwen3:1.7b` is the next one. Find this out in Phase 1, not Phase 6.
+**VRAM contention.** 8 GB split three ways is the tightest part of this design. Whisper plus `qwen3.5:4b` with a 16k context leaves TouchDesigner about 2.8 GB. If your scene needs more, KV cache `q8_0` is the first release valve, Plan B (Whisper on CPU) the second, and `qwen3.5:2b` the third. Find this out in Phase 1, not Phase 6.
 
 **Acoustic feedback and self-hearing.** An open mic in a room with four monitors is the classic installation failure. The hardware aux send makes it impossible for the *recording* path to loop, but the mic still hears the room acoustically. Set the CQ's gate with the monitors at show level, and keep the mic out of every monitor mix. Never patch it "just to check" during install and forget.
 
@@ -1314,12 +1452,21 @@ Then a **soak test**: four hours, triggering every 30 seconds, with the real vis
 
 | Decision | Chosen | Why |
 | --- | --- | --- |
-| Both models on GPU | Whisper `int8` + `qwen3:4b` Q4 | ~4.8 GB, keeps the 3 GB TouchDesigner reserve |
+| Both models on GPU | Whisper `int8` + `qwen3.5:4b` | \~5.2 GB with a 16k context — at the line of the 3 GB reserve; measure |
 | Screen audio | 5th monitor on CQ Out 5, HDMI muted | One clock domain, no slap-back |
 | Mic path to Python | USB dongle on CQ Out 6 | Cheapest, and the only option with no software gamble |
 | VCV per-monitor audio | 4 discrete channels | Spatial movement is most of the effect |
 | Visit shape | 4–8 turns, session memory, nothing between visits | The conversation is the piece; isolation is enforced in code |
-| Web search | On, `allowed_topics` only | The world, never the person |
+| Web search — the world | On, `world_topics` only | Engine writes the query; visitor speech never enters it |
+| Web search — the visitor | On, explicit spoken consent | Their data, their choice, with a category screen on results |
+| Web search — third parties | Off, in code | They are not in the room and cannot consent |
+| Voice output | HDMI, centre screen | One playback path, so no echo; latency is irrelevant at this scale |
+| Origin story, first ask | Recording: fi (random of two voices), es, en for everything else | Canonical, instant, free |
+| Origin story, follow-ups | Conditional prompt load of `origin.md` | Pacing first, token budget second |
+| Readings | Answer the question asked, as prophecy from the archive | Versatile in what, consistent in how |
+| Consistency within a visit | Fate sheet, re-injected as `<established>` | Several questions, one life |
+| Model | `qwen3.5:4b`, thinking off, via the native `ollama` client | Cheap context cache; client can set `think` and `num_ctx` per request |
+| Context window | `num_ctx 16384` on every request, flash attention on | The always-on prompt alone exceeds Ollama's 4,096 default |
 | Transcript logging | On during a visit, sanitised to `history/` after | Retention in minutes, automatic sanitisation |
 | `mood` field | Keep | Nearly free, gives the visuals a semantic hook |
 
@@ -1329,7 +1476,9 @@ Then a **soak test**: four hours, triggering every 30 seconds, with the real vis
 | --- | --- | --- |
 | Barge-in during speech | Ignore / cancel-and-restart | Ignore, with cooldown — crowds make cancel chaotic |
 | Corpus scale | One file / many tagged files | Start with one; add selection only when it stops fitting |
-| Tier 2 languages | Which seven | Estonian and Russian first, for this city |
+| Tier 2 languages | Which six, to reach ten | Estonian and Russian first, for this city |
+| Swedish origin recording | Record one / keep English | Record one — Swedish is a main language and currently hears English |
+| Finnish origin voices | Random of two / match the live voice | Listen in the room; random suits the lore, matching sounds like one speaker |
 | Languages on signage | — | If the sign says "speak to it", visitors will try languages you have no voice for. Worth deciding what happens then |
 | `history/` in git | Yes / no | No, initially — it is small, but it is the one folder whose contents you did not write |
 
