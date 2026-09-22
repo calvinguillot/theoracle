@@ -1,0 +1,107 @@
+audio:
+  input_device: "USB Audio CODEC"    # the dongle carrying the mic feed from CQ Out 5
+  output_device: "HDMI"              # the centre screen's speakers - TD plays here
+  silence_ms: 800                    # silence before the engine stops listening
+  max_utterance_s: 20
+  speech_start_timeout_s: 8
+  min_speech_s: 0.5
+  preroll_s: 2.0                     # audio kept from before the trigger
+
+stt:
+  model: large-v3-turbo
+  device: cuda
+  compute_type: int8
+  min_confidence: 0.5
+  allowed_languages: [fi, sv, en, es, de, et, it, pt, ja, zh]
+  default_language: fi
+
+  # Changing language mid-visit - see "Languages"
+  language_lock: sticky              # sticky | per_turn | fixed
+  switch_confidence: 0.75            # higher bar than min_confidence to change language
+  switch_min_words: 3                # short replies never trigger a switch
+  switch_min_speech_s: 1.5
+
+llm:
+  host: http://localhost:11434
+  model: qwen3.5:4b
+  think: false                       # MUST stay false - thinking is on by default
+  num_ctx: 16384                     # MUST be set - the default 4096 cuts the instructions
+  num_predict: 200
+  temperature: 0.7                   # Qwen's recommended non-thinking settings
+  top_p: 0.8
+  top_k: 20
+  presence_penalty: 1.5
+  timeout_s: 15
+  max_retries: 1
+
+websearch:
+  enabled: true
+  timeout_s: 3                       # hard cap; a slow search is skipped, never waited on
+  max_chars: 2000                    # results truncated before they reach the model
+  max_per_visit: 2
+  cache_minutes: 30                # WORLD topics only, in memory only - never self-search
+
+  world_topics:                      # searched freely; engine writes the query
+    [weather, tide, date, season, city, trade, place, news]
+
+  self_search:
+    enabled: true                    # the visitor may ask to be looked up
+    require_consent: true            # MUST stay true - an explicit spoken yes
+    offer_once: true
+    narrow_questions: 1              # disambiguation attempts before giving up
+    cache: false                     # MUST stay false - a result is used once, for one visitor
+    drop_categories:                 # never reaches the model, never spoken
+      [criminal, health, death_notice, home_address, financial]
+
+  third_party_search: false          # MUST stay false - see Step 3d
+
+conversation:
+  max_turns: 8                       # hard cap; the visit ends after this
+  max_silence_s: 12                  # no reply -> the visit ends
+  end_on_sensor_clear_s: 5           # they walked away
+  context_turns: 6                   # how much of the visit the model sees
+  fate_max_entries: 8                # facts of the foretold life kept per visit
+  fate_max_words: 12
+
+tts:
+  voices:                          # one per language in stt.allowed_languages
+    fi: fi_FI-harri-medium
+    sv: sv_SE-alma-medium
+    en: en_GB-alba-medium
+    es: es_MX-ald-medium
+    de: de_DE-thorsten-high        # the only 'high' voice - slower to synthesise
+    et: et_EE-news-medium
+    it: it_IT-paola-medium
+    pt: pt_BR-cadu-medium
+    ja: ja_JP-hi_fi_captain-medium
+    zh: zh_CN-huayan-medium
+  length_scale: 1.0
+  output_dir: runtime/audio
+  max_duration_s: 45
+  keep_last: 20
+
+prerendered:
+  dir: voices/prerendered
+  origin:                          # played on the FIRST "what are you?" question
+    fi: [origin_fi_female.wav, origin_fi_male.wav]   # one chosen at random, fixed per visit
+    es: [origin_es.wav]
+    en: [origin_en.wav]
+  fallback: generate               # no recording in their language -> answer live from origin.md
+
+guard:
+  max_input_chars: 300
+  max_output_chars: 600
+  cooldown_s: 2.0
+  max_per_minute: 12
+
+bridge:
+  ws_host: 127.0.0.1
+  ws_port: 8765
+  ws_token: "change-me"
+  osc_td_port: 9001
+
+logging:
+  store_transcripts: true            # raw, in the session dir, deleted at visit end
+  history_dir: history               # sanitised summaries, kept
+  sanitize_on_end: true              # MUST stay true in an exhibition
+  keep_raw_sessions: false           # true only while debugging, never in a show
