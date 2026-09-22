@@ -1,0 +1,138 @@
+DISTANCE_CHOP = '/project1/serial1_chop'
+DISTANCE_CHANNEL = 'dist'
+SWITCH_TOP = '/project1/pattern_selector'
+
+THRESHOLD = 30.0
+
+OSC_OUT_PATHS = [
+    '/project1/oscoutdat1',
+    '/project1/oscoutdat2',
+]
+
+ON_THRESHOLD = 0.5
+
+
+def onFrameStart(frame):
+    sensor = op(DISTANCE_CHOP)
+    selector = op(SWITCH_TOP)
+
+    if sensor is None:
+        print(
+            '[STATE] sensor missing',
+            flush=True
+        )
+        return
+
+    if selector is None:
+        print(
+            '[STATE] selector missing',
+            flush=True
+        )
+        return
+
+    try:
+        distance = float(
+            sensor[DISTANCE_CHANNEL].eval()
+        )
+    except Exception as exc:
+        print(
+            f'[STATE] distance read failed: {exc}',
+            flush=True
+        )
+        return
+
+    index = (
+        2
+        if distance <= THRESHOLD
+        else 1
+    )
+
+    selector.par.index = index
+
+    if frame % 30 == 0:
+        print(
+            f'[STATE] distance={distance:.2f} cm; '
+            f'index={index}; '
+            f'actual={selector.par.index.eval()}',
+            flush=True
+        )
+
+    return
+
+
+def onCook(scriptOp):
+    dat = scriptOp.inputs[0]
+
+    if dat is None:
+        print(
+            '[OSC] script1 has no input DAT',
+            flush=True
+        )
+        return
+
+    if dat.numRows < 6 or dat.numCols < 6:
+        print(
+            f'[OSC] expected at least 6x6 values, '
+            f'got {dat.numRows}x{dat.numCols}',
+            flush=True
+        )
+        return
+
+    pattern = []
+
+    for row in range(6):
+        for col in range(6):
+            try:
+                value = float(
+                    dat[row, col].val
+                )
+            except Exception as exc:
+                print(
+                    f'[OSC] invalid value at '
+                    f'row={row}, col={col}: {exc}',
+                    flush=True
+                )
+                return
+
+            pixel = (
+                1
+                if value > ON_THRESHOLD
+                else 0
+            )
+
+            pattern.append(pixel)
+
+    sent_count = 0
+
+    for output_path in OSC_OUT_PATHS:
+        osc_out = op(output_path)
+
+        if osc_out is None:
+            print(
+                f'[OSC] missing operator: {output_path}',
+                flush=True
+            )
+            continue
+
+        try:
+            osc_out.sendOSC(
+                '/pattern',
+                pattern
+            )
+            sent_count += 1
+
+        except Exception as exc:
+            print(
+                f'[OSC] send failed for '
+                f'{output_path}: {exc}',
+                flush=True
+            )
+
+    if sent_count > 0:
+        print(
+            f'[OSC] sent pattern to '
+            f'{sent_count}/{len(OSC_OUT_PATHS)} Pis',
+            flush=True
+        )
+
+    return

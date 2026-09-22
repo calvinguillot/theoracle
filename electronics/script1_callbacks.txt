@@ -1,0 +1,38 @@
+def read_matrix(dat):
+    values = []
+
+    for row in dat.rows():
+        for cell in row:
+            try:
+                value = float(cell.val)
+            except (ValueError, TypeError):
+                continue
+
+            values.append(1 if value >= 0.5 else 0)
+
+    if len(values) != 36:
+        debug('{}: expected 36 values, got {}'.format(
+            dat.name,
+            len(values)
+        ))
+        return None
+
+    return values
+
+
+def onCook(scriptOp):
+    if len(scriptOp.inputs) < 2:
+        debug('script1 needs choptodat2 and choptodat3')
+        return
+
+    pattern1 = read_matrix(scriptOp.inputs[0])
+    pattern2 = read_matrix(scriptOp.inputs[1])
+
+    if pattern1 is None or pattern2 is None:
+        return
+
+    # Pattern 1 → Pi 1
+    op('oscoutdat2').sendOSC('/pattern', pattern1)
+
+    # Pattern 2 → Pi 2
+    op('oscoutdat1').sendOSC('/pattern', pattern2)

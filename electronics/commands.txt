@@ -1,0 +1,5 @@
+python3 matrix_osc_receiver_nodeps.py
+
+
+sudo pkill -9 -f matrix_osc_receiver_nodeps.py
+
