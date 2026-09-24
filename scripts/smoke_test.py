@@ -122,14 +122,27 @@ def load_models() -> None:
 
 
 def record() -> "object":
+    """Record at the device's own rate, then convert to what Whisper wants.
+
+    Asking a 48 kHz interface for 16 kHz gets you 'Invalid sample rate [-9997]'
+    on WASAPI, which does not resample. Recording native and converting here
+    behaves the same on every host API.
+    """
     import sounddevice as sd
-    import numpy as np
+    sys.path.insert(0, str(REPO / "scripts"))
+    import audio_devices as ad
+
     device = find_device(AUDIO.get("input_device"), "input")
-    log(f"recording {RECORD_SECONDS}s — speak now")
-    buf = sd.rec(int(RECORD_SECONDS * SAMPLE_RATE), samplerate=SAMPLE_RATE,
-                 channels=1, dtype="float32", device=device)
+    rate = ad.native_samplerate(device, "input")
+    chans = ad.usable_channels(device, "input", 1)
+    pick = int(AUDIO.get("input_channel", 0) or 0)
+
+    note = f" ({chans} ch, taking {pick})" if chans > 1 else ""
+    log(f"recording {RECORD_SECONDS}s at {rate} Hz{note} — speak now")
+    buf = sd.rec(int(RECORD_SECONDS * rate), samplerate=rate,
+                 channels=chans, dtype="float32", device=device)
     sd.wait()
-    return np.squeeze(buf)
+    return ad.to_target_rate(ad.pick_channel(buf, pick), rate, SAMPLE_RATE)
 
 
 def transcribe(audio) -> tuple[str, str, float]:

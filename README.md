@@ -612,6 +612,7 @@ dependencies = [
   "pyyaml>=6",
   "rank-bm25>=0.2.2",
   "numpy==1.24.4",
+  "soxr>=0.3",          # optional: better 48 kHz -> 16 kHz than the numpy fallback
 ]
 
 [tool.uv]
@@ -822,6 +823,7 @@ Create `C:\theoracle\config.yaml`:
 ```yaml
 audio:
   input_device: "CQ 1&2 (CQ12T)"     # the mic feed arriving from the mixer over USB
+  input_channel: 0                   # which channel of it carries the mic, 0-based
   output_device: "HDMI"              # the centre screen's speakers - TD plays here
   silence_ms: 800                    # silence before the engine stops listening
   max_utterance_s: 20
@@ -1241,7 +1243,10 @@ measurement.
 | `listen_start` never arrives | `trigger_exec` is not calling `listen_start`, Off to On is disabled, or the trigger went 0 → 1 while the DAT was off |
 | `nothing heard` | Microphone path — check `audio.input_device` with `check_env.py`, and the mixer's Aux 5 |
 | `matches 3 devices` for a device name | Windows lists the card once per host API. The current `check_env.py` chooses one and says which; if you have an older copy, add `scripts/audio_devices.py` |
-| `Error opening InputStream` / device unavailable | Something else holds it exclusively — usually an ASIO client (TouchDesigner or VCV Rack) on the same interface. See [`INTEGRATION.md`](INTEGRATION.md) |
+| `Invalid number of channels [PaErrorCode -9998]` | The device will not open with one channel — a laptop mic array reports four and WASAPI hands you its own format or nothing. The scripts now negotiate a count it accepts and take `audio.input_channel` (default 0) out of it |
+| `unreadable: unknown format: 3` on a WAV that plays fine | Format 3 is IEEE float; Python's `wave` module only reads integer PCM. The file is good. `python scripts/wav_io.py --convert voices/prerendered` rewrites them as mono 16-bit PCM at the voice rate |
+| `Invalid sample rate [PaErrorCode -9997]` | The interface runs at 48 kHz and was asked for 16 kHz. WASAPI does not resample. The current `smoke_test.py` records at the device's native rate and converts — check you have it, and `scripts/audio_devices.py` |
+| `Error opening InputStream` / device unavailable (−9996, −9985) | Something else holds it exclusively — usually an ASIO client (TouchDesigner or VCV Rack) on the same interface. See [`INTEGRATION.md`](INTEGRATION.md) |
 | Terminal shows a reply, no sound in the room | TouchDesigner's side: `AUDIO_DIR`, or the Audio Device Out CHOPs |
 | Reasoning text appears in the reply | Thinking is on — check `think=False` is reaching Ollama |
 | Everything works but takes 10+ seconds | The models were cold. Run it twice; set `OLLAMA_KEEP_ALIVE=-1` |
@@ -1585,6 +1590,7 @@ starts immediately.
 | `Using Python ... environment at: C:\Program Files\Derivative\TouchDesigner\bin` then `Access is denied` | `UV_PYTHON` is set, so uv is installing into TouchDesigner itself | `unset UV_PYTHON`, update `scripts/setup-shell.sh` to the current version (Step 5), retry. **Never** run as administrator to get past this |
 | A package worked, then vanished after `uv sync` | It was installed with `uv pip install` | Install it with `uv add` so it is in `pyproject.toml` |
 | `python -c "import sys..."` prints a different version than TouchDesigner | uv built the environment on the wrong Python | `rm -rf .venv`, correct the path in `scripts/setup-shell.sh`, redo Step 7 |
+| The prompt says `(td)` — or anything other than `(theoracle)` | A second environment exists, usually `td/.venv` made by tdPyEnvManager pointed at the `.toe` file's folder | The label is just the folder above `.venv`, so ignore it and check the truth: `python -c "import sys; print(sys.prefix)"`. Then `deactivate`, `cd` to the repository root, `source .venv/Scripts/activate`. Set tdPyEnvManager's Install Path to the repository root and Environment Name to `.venv`, and delete the stray one |
 | `Could not locate cudnn64_9.dll` or `cublas64_12.dll` | CUDA libraries not on PATH | Check `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` are in `pyproject.toml` (`uv add` them if not); add their `bin` folders under `.venv\Lib\site-packages\nvidia` to PATH in `run.bat`. If it persists, use Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
 | An error mentioning cuDNN 8 | Version mismatch | `uv add "ctranslate2==4.4.0"` |
 | A guide tells you to download Piper from `rhasspy/piper` | That repository is archived | Use `pip install piper-tts`, which is OHF-Voice/piper1-gpl — see Step 9 |
@@ -1668,6 +1674,7 @@ C:\theoracle\
     setup-shell.sh           TD_PYTHON and PATH for a new terminal - source it first
     check_env.py             diagnostics
     audio_devices.py         name -> PortAudio index, host APIs and all
+    wav_io.py                reads float WAVs; --convert normalises them
     ollamaweb.py             web search smoke test
     smoke_test.py            the whole chain, once (Step 13)
   td/

@@ -138,3 +138,126 @@ def resolve_reported(spec, kind: str) -> tuple[int | None, str]:
     if others > 0:
         note += f"   (chosen from {others + 1} host APIs offering this device)"
     return index, note
+
+
+# ── sample rates ──────────────────────────────────────────────────────────
+# The CQ runs at 48 kHz and Whisper wants 16 kHz. Windows' own mixer would
+# convert between them, but PortAudio's WASAPI backend opens the device with the
+# exact format you ask for and fails with "Invalid sample rate [-9997]" if it
+# cannot. MME and DirectSound hide this by resampling behind your back, at a
+# quality you do not choose.
+#
+# So: record at whatever rate the device actually runs at, and convert here,
+# where the filtering is visible and the same on every host API.
+
+TARGET_RATE = 16000          # what faster-whisper expects, always
+
+
+def native_samplerate(index: int | None, kind: str = "input") -> int:
+    """The rate this device really runs at. 48000 for most interfaces."""
+    import sounddevice as sd
+    if index is None:
+        index = sd.default.device[0 if kind == "input" else 1]
+    return int(round(sd.query_devices(index)["default_samplerate"]))
+
+
+def _lowpass(cutoff_norm: float, taps: int = 121):
+    """A windowed-sinc FIR. cutoff_norm is a fraction of the sample rate."""
+    import numpy as np
+    n = np.arange(taps) - (taps - 1) / 2
+    h = 2 * cutoff_norm * np.sinc(2 * cutoff_norm * n) * np.hamming(taps)
+    return h / h.sum()
+
+
+def to_target_rate(audio, sr_in: int, sr_out: int = TARGET_RATE):
+    """Resample mono float32 audio. Uses soxr when it is installed."""
+    import numpy as np
+    if sr_in == sr_out:
+        return np.asarray(audio, dtype=np.float32)
+
+    try:
+        import soxr
+        return soxr.resample(np.asarray(audio, dtype=np.float32),
+                             sr_in, sr_out).astype(np.float32)
+    except ImportError:
+        pass
+
+    audio = np.asarray(audio, dtype=np.float64).ravel()
+    if sr_out < sr_in:
+        # Anti-alias first, or every frequency above the new Nyquist folds back
+        # into the speech band as noise Whisper will happily transcribe.
+        audio = np.convolve(audio, _lowpass(0.45 * sr_out / sr_in), mode="same")
+    n_out = int(round(len(audio) * sr_out / sr_in))
+    x_out = np.linspace(0, len(audio) - 1, n_out)
+    return np.interp(x_out, np.arange(len(audio)), audio).astype(np.float32)
+
+
+def usable_channels(index: int | None, kind: str = "input", want: int = 1) -> int:
+    """How many channels this device will actually open.
+
+    A laptop microphone array reports four channels and, on WASAPI, refuses to
+    open as one: shared mode hands you the device's own format or nothing. Ask
+    for what you want, and fall back to everything it has.
+    """
+    import sounddevice as sd
+    check = sd.check_input_settings if kind == "input" else sd.check_output_settings
+    rate = native_samplerate(index, kind)
+    for n in (want, _max_channels(index, kind)):
+        if not n:
+            continue
+        try:
+            check(device=index, channels=n, samplerate=rate)
+            return n
+        except Exception:
+            continue
+    return want          # let the real open() raise something informative
+
+
+def _max_channels(index: int | None, kind: str) -> int:
+    import sounddevice as sd
+    if index is None:
+        index = sd.default.device[0 if kind == "input" else 1]
+    key = "max_input_channels" if kind == "input" else "max_output_channels"
+    return int(sd.query_devices(index)[key])
+
+
+def pick_channel(buf, channel: int = 0):
+    """One column out of a multi-channel recording, as mono float32.
+
+    Channel 0, not a downmix: the elements of a microphone array are spaced
+    centimetres apart, so averaging them comb-filters the speech — quietly, at
+    exactly the frequencies that carry consonants.
+    """
+    import numpy as np
+    buf = np.asarray(buf, dtype=np.float32)
+    if buf.ndim == 1:
+        return buf
+    if channel >= buf.shape[1]:
+        channel = 0
+    return np.ascontiguousarray(buf[:, channel])
+
+
+# PortAudio's codes, spelled out. Getting these wrong sends someone looking for
+# a driver conflict when the real answer is one number in a config file.
+_PA_ERRORS = {
+    -9998: ("paInvalidChannelCount",
+            "the device will not open with that many channels — "
+            "audio_devices.usable_channels finds a count it accepts"),
+    -9997: ("paInvalidSampleRate",
+            "the device does not run at that rate — record at its native rate "
+            "and resample (audio_devices.to_target_rate does this)"),
+    -9996: ("paInvalidDevice", "that device index does not exist"),
+    -9985: ("paDeviceUnavailable",
+            "something else holds the device exclusively, "
+            "usually an ASIO client or a WDM-KS stream"),
+    -9999: ("paNotInitialized", "PortAudio failed to start — reinstall sounddevice"),
+}
+
+
+def explain_open_error(e: Exception) -> str:
+    """PortAudio's error codes are terse. Say what to actually do."""
+    args = getattr(e, "args", ())
+    code = args[1] if len(args) > 1 else None
+    if code in _PA_ERRORS:
+        return _PA_ERRORS[code][1]
+    return "check the device is connected and not in use"

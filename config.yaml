@@ -1,6 +1,6 @@
 audio:
-  input_device: "CQ 1&2 (CQ12T)"    # the dongle carrying the mic feed from CQ Out 5
-  output_device: "CQ 5&6 (USB) (CQ12T)"              # the centre screen's speakers - TD plays here
+  input_device: "Mikrofonijono (Realtek(R) Audio"    # the dongle carrying the mic feed from CQ Out 5
+  output_device: "Kaiuttimet (Realtek(R) Audio)"              # the centre screen's speakers - TD plays here
   silence_ms: 800                    # silence before the engine stops listening
   max_utterance_s: 20
   speech_start_timeout_s: 8

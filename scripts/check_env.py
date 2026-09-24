@@ -18,7 +18,6 @@ import json
 import subprocess
 import sys
 import time
-import wave
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -70,10 +69,25 @@ def check_python() -> None:
     v = sys.version.split()[0]
     prefix = Path(sys.prefix)
     record(OK, "version", v)
-    in_venv = ".venv" in prefix.parts
-    record(OK if in_venv else BAD, "environment", str(prefix))
-    if not in_venv:
-        print("       Not running inside .venv — activate it first:")
+
+    # The repository's own .venv, not merely *a* .venv. A second environment
+    # somewhere else in the tree - td/.venv is the usual one, created by
+    # tdPyEnvManager pointed at the wrong folder - has different packages in it,
+    # and the shell prompt is named after its parent folder, so it says (td)
+    # rather than (theoracle). Compare paths; never trust the prompt.
+    expected = (REPO / ".venv").resolve()
+    if prefix == expected:
+        record(OK, "environment", str(prefix))
+    elif ".venv" in prefix.parts:
+        record(BAD, "environment", f"{prefix} — this is not the repository's .venv")
+        print(f"       Expected: {expected}")
+        print("       A second environment exists. Deactivate, then from the repository root:")
+        print("       source .venv/Scripts/activate")
+        print("       If it was made by tdPyEnvManager, set its Install Path to the")
+        print("       repository root and its Environment Name to .venv, then delete the other one.")
+    else:
+        record(BAD, "environment", f"{prefix} — not inside a virtual environment")
+        print("       Activate it first, from the repository root:")
         print("       source .venv/Scripts/activate   (Git Bash)")
     if not v.startswith("3.11"):
         print("       Note: this must match TouchDesigner's Python version.")
@@ -241,6 +255,10 @@ def check_voices(cfg: dict) -> None:
 
 def check_prerendered(cfg: dict) -> None:
     section("Origin recordings")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import wav_io
+
+    needs_convert: list[str] = []
     pre = cfg.get("prerendered", {}) or {}
     pdir = REPO / (pre.get("dir") or "voices/prerendered")
     if not pdir.exists():
@@ -253,11 +271,22 @@ def check_prerendered(cfg: dict) -> None:
                 record(BAD, f"  {lang}", f"{fname} missing")
                 continue
             try:
-                with wave.open(str(f)) as w:
-                    secs = w.getnframes() / w.getframerate()
-                record(OK, f"  {lang}", f"{fname} — {secs:.0f}s @ {w.getframerate()} Hz")
+                m = wav_io.probe(f)
             except Exception as e:
                 record(BAD, f"  {lang}", f"{fname} — unreadable: {e}")
+                continue
+            detail = (f"{fname} — {m['seconds']:.0f}s @ {m['rate']} Hz, "
+                      f"{m['format_name']} {m['bits']}-bit, {m['channels']} ch")
+            if m["format"] == 1 and m["bits"] == 16 and m["channels"] == 1:
+                record(OK, f"  {lang}", detail)
+            else:
+                record(WARN, f"  {lang}", detail + "  — not mono 16-bit PCM")
+                needs_convert.append(fname)
+
+    if needs_convert:
+        print("\n       These play fine but are not the format the rest of the piece uses.")
+        print("       Make them match Piper's output:")
+        print("       python scripts/wav_io.py --convert voices/prerendered")
 
 
 def check_audio(cfg: dict) -> None:
@@ -293,15 +322,24 @@ def check_audio(cfg: dict) -> None:
             record(BAD, key, str(e))
             continue
         record(OK, key, note.strip())
+        rate = ad.native_samplerate(index, kind)
+        want = 1 if kind == "input" else 2
+        chans = ad.usable_channels(index, kind, want)
         try:
             if kind == "input":
-                sd.check_input_settings(device=index, channels=1, samplerate=16000)
+                sd.check_input_settings(device=index, channels=chans, samplerate=rate)
             else:
-                sd.check_output_settings(device=index, channels=2, samplerate=48000)
-            record(OK, f"  {key} open", "the driver accepts these settings")
+                sd.check_output_settings(device=index, channels=chans, samplerate=rate)
+            detail = f"opens at {rate} Hz, {chans} channel(s)"
+            if kind == "input":
+                if chans > 1:
+                    wanted = int(audio.get("input_channel", 0) or 0)
+                    detail += f" — taking channel {wanted} (audio.input_channel)"
+                if rate != ad.TARGET_RATE:
+                    detail += f", resampled to {ad.TARGET_RATE} Hz for Whisper"
+            record(OK, f"  {key} open", detail)
         except Exception as e:
-            record(BAD, f"  {key} open", f"{type(e).__name__}: {e} "
-                                         "— something else may hold this device (ASIO is exclusive)")
+            record(BAD, f"  {key} open", f"{e} — {ad.explain_open_error(e)}")
 
 
 def check_stories() -> None:
