@@ -255,8 +255,8 @@ def check_voices(cfg: dict) -> None:
 
 def check_prerendered(cfg: dict) -> None:
     section("Origin recordings")
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import wav_io
+    sys.path.insert(0, str(REPO))
+    from engine import wav_io
 
     needs_convert: list[str] = []
     pre = cfg.get("prerendered", {}) or {}
@@ -286,7 +286,7 @@ def check_prerendered(cfg: dict) -> None:
     if needs_convert:
         print("\n       These play fine but are not the format the rest of the piece uses.")
         print("       Make them match Piper's output:")
-        print("       python scripts/wav_io.py --convert voices/prerendered")
+        print("       python -m engine.wav_io --convert voices/prerendered")
 
 
 def check_audio(cfg: dict) -> None:
@@ -302,8 +302,8 @@ def check_audio(cfg: dict) -> None:
         record(BAD, "query_devices", f"{type(e).__name__}: {e}")
         return
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import audio_devices as ad
+    sys.path.insert(0, str(REPO))
+    from engine import audio_devices as ad
 
     print("       Copy a distinctive fragment of a name into config.yaml audio.*_device.")
     print("       Windows lists each card once per host API — that is why names repeat.\n")

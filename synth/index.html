@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oracle soundscape</title>
+<!--
+  theoracle — granular soundscape, with its own editor.
+
+  Served by TouchDesigner's Web Server DAT (td_synth_callbacks.py), opened in
+  Chrome with start_synth.bat. Everything you change on the page is kept in
+  synth/settings.json when you press Save (or Ctrl+S); TouchDesigner writes it.
+
+  What TouchDesigner can send (JSON, OSC-style addresses):
+
+    {"inputs": {"distance": 0.42, "level": 0.1}}        named inputs, routed on the page
+    {"address": "/in/distance", "value": 0.42}          the same, one at a time
+    {"address": "/scene", "value": "generating"}        the Oracle's state
+    {"address": "/layer/1/density", "value": 6, "glide": 3}   set a parameter directly
+    {"set": {"/master/gain": 0.4}, "glide": 2}
+
+  Inputs are the intended way in: TouchDesigner says what is happening, the page
+  decides what that does to the sound, and you can change that without code.
+-->
+<style>
+  :root {
+    --deep: #0a1418;      /* olkiluoto bedrock at night */
+    --stone: #16262b;
+    --stone2: #1d3136;
+    --line: #2b4148;
+    --text: #c9d6d3;
+    --dim: #6f8784;
+    --glow: #8fd3c7;      /* the one colour that means "alive" or "this scene's own" */
+    --warn: #e0b36a;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--deep); color: var(--text); }
+  body { margin: 0; font: 15px/1.5 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
+  main { max-width: 1480px; margin: 0 auto; padding: 22px 24px 60px; }
+  h1 { font-weight: normal; font-size: 26px; margin: 0; }
+  h2 { font-weight: normal; font-size: 19px; margin: 0 0 4px; }
+  .hint { color: var(--dim); margin: 0 0 12px; font-size: 14px; }
+  .on { color: var(--glow) !important; }
+  .bad { color: var(--warn) !important; }
+
+  header { display: grid; gap: 8px; margin-bottom: 26px; }
+  .titlebar { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  #dirty { color: var(--dim); }
+  #dirty.bad { color: var(--warn); }
+  .status { display: flex; gap: 18px; flex-wrap: wrap; color: var(--dim); }
+  .status b { font-weight: normal; color: var(--text); }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  canvas { display: block; width: 100%; height: 40px; background: var(--stone); border-radius: 3px; }
+
+  input, select, button {
+    font: inherit; font-size: 14px; color: var(--text); background: var(--stone);
+    border: 1px solid var(--line); border-radius: 3px; padding: 4px 8px;
+  }
+  input[type=number] { width: 100%; padding: 3px 5px; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--glow); background: none; border: 0; padding: 0; }
+  input[type=checkbox] { accent-color: var(--glow); }
+  button { cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button[aria-pressed=true] { border-color: var(--glow); color: var(--glow); }
+  :focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+  #save:not(:disabled) { border-color: var(--glow); color: var(--glow); }
+  #start { border-color: var(--warn); color: var(--warn); }
+
+  .cols { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 36px; margin-bottom: 36px; }
+  @media (max-width: 960px) { .cols { grid-template-columns: 1fr; } }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th { font-weight: normal; color: var(--dim); text-align: left; padding: 3px 6px; }
+  td { padding: 4px 6px; border-top: 1px solid var(--stone); vertical-align: middle; }
+  tr.stale td { color: var(--dim); }
+  .vbar { position: relative; height: 6px; background: var(--stone); border-radius: 3px; min-width: 60px; }
+  .vbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--glow); border-radius: 3px; }
+  tr.stale .vbar i { background: var(--line); }
+
+  .route { background: var(--stone); border-radius: 4px; padding: 10px 12px; margin-bottom: 10px; line-height: 2.1; }
+  .route.off { opacity: .55; }
+  .route select { max-width: 13em; }
+  .route input[type=number] { width: 5.5em; display: inline-block; }
+  .route .now { color: var(--glow); font-variant-numeric: tabular-nums; }
+  .route .rm { float: right; }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .tab.playing::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 7px;
+                        border-radius: 50%; background: var(--glow); vertical-align: 1px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(390px, 1fr)); gap: 14px; margin-top: 14px; }
+  .card { background: var(--stone); border-radius: 4px; padding: 10px 12px 12px; }
+  .lhead { display: flex; gap: 6px; margin-bottom: 8px; }
+  .lhead input { flex: 1; font-size: 17px; background: none; border-color: transparent; padding-left: 0; }
+  .lhead input:hover, .lhead input:focus { border-color: var(--line); padding-left: 6px; }
+  .prow { display: grid; grid-template-columns: 7.4em minmax(90px, 1fr) 4.8em 3.4em 3.6em; gap: 6px; align-items: center;
+          font-size: 13px; padding: 2px 0 2px 6px; border-left: 2px solid transparent; }
+  .prow.own { border-left-color: var(--glow); }
+  .prow select { grid-column: 2 / 4; font-size: 13px; }
+  .plabel { color: var(--dim); }
+  .prow.own .plabel { color: var(--text); }
+  .live { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+  .live.routed { color: var(--glow); }
+  .reset { font-size: 12px; padding: 1px 4px; }
+  details { margin-top: 18px; }
+  summary { cursor: pointer; color: var(--dim); }
+  .statemap { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 18px; margin-top: 10px; }
+  .statemap label { display: flex; justify-content: space-between; gap: 8px; }
+  #log { color: var(--dim); font-size: 13px; margin-top: 30px; white-space: pre-wrap; max-height: 12em; overflow: auto; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="titlebar">
+      <h1>Oracle soundscape</h1>
+      <span id="dirty">Saved</span>
+    </div>
+    <div class="status">
+      <span>TouchDesigner <b id="ws">connecting</b></span>
+      <span>Audio <b id="ac">stopped</b></span>
+      <span>Playing <b id="scene">idle</b></span>
+      <span>Oracle state <b id="state">none yet</b></span>
+      <span>Grains per second <b id="gps">0</b></span>
+    </div>
+    <canvas id="meter" width="1400" height="80" aria-label="Output level"></canvas>
+    <div class="controls">
+      <label>Output <select id="sink"><option value="">System default</option></select></label>
+      <button id="save" disabled title="Ctrl+S">Save</button>
+      <button id="revert">Revert to saved</button>
+      <button id="start" hidden>Start sound</button>
+    </div>
+  </header>
+
+  <div class="cols">
+    <section>
+      <h2>From TouchDesigner</h2>
+      <p class="hint">Everything TouchDesigner has sent since this page opened. Press Route to make a number move a parameter.</p>
+      <label><input type="checkbox" id="follow" checked> Follow the Oracle's state</label>
+      <p class="hint" style="margin-top:4px">Turn this off while tuning, so clicking a scene plays it and the Oracle does not switch it away.</p>
+      <table>
+        <thead><tr><th>Input</th><th>Value</th><th></th><th>Seen range</th><th>Per second</th><th></th></tr></thead>
+        <tbody id="inputs"></tbody>
+      </table>
+      <p class="hint" id="noinputs" style="margin-top:10px">Nothing yet. In TouchDesigner: <code>mod(op('synth_callbacks')).input('distance', 0.4)</code></p>
+    </section>
+
+    <section>
+      <h2>Routes</h2>
+      <p class="hint">Each route turns an input into movement on one parameter. "Adds to" moves the scene's value up and down; "replaces" takes the parameter over completely.</p>
+      <div id="routes"></div>
+      <button id="addroute">Add route</button>
+    </section>
+  </div>
+
+  <section>
+    <h2>Scenes</h2>
+    <p class="hint" id="scenehint"></p>
+    <div class="tabs" id="tabs" role="group" aria-label="Scene to edit"></div>
+    <div class="controls">
+      <label>Fade in over <input id="glide" type="number" min="0" max="60" step="0.5" style="width:5em"> s</label>
+      <button id="play">Play this scene</button>
+      <button id="delscene">Delete this scene</button>
+      <input id="newname" placeholder="New scene name" aria-label="New scene name" style="width:12em">
+      <button id="addscene">Add scene</button>
+    </div>
+    <div class="cards" id="cards"></div>
+    <details>
+      <summary>Which scene plays for each Oracle state</summary>
+      <div class="statemap" id="statemap"></div>
+    </details>
+  </section>
+
+  <div id="log" role="log"></div>
+</main>
+
+<script>
+'use strict';
+
+// ── small helpers ──────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k in e) e[k] = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of kids) if (c != null) e.append(c);
+  return e;
+}
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const wrap = x => x - Math.floor(x);
+function log(t) { const l = $('log'); l.textContent = `${new Date().toLocaleTimeString()}  ${t}\n` + l.textContent.slice(0, 3000); }
+
+// ── configuration ──────────────────────────────────────────────────────────
+const Q = new URLSearchParams(location.search);
+const WS_URL = Q.get('ws') || `ws://${location.host || 'localhost:9980'}/`;
+const SINK_HINT = (Q.get('sink') || '').toLowerCase();
+const NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;           // recording names
+const SCENE_RE = /^[A-Za-z0-9_-]{1,32}$/;
+const INPUT_RE = /^[A-Za-z0-9_/.:-]{1,80}$/;
+const TICK_MS = 25, LOOKAHEAD = 0.12, MAX_ACTIVE = 220;
+const ROOT = 73.42;                                  // D2; the generated sounds are tuned to it
+const N_LAYERS = 4;
+const GENERATED = ['drone', 'glass', 'breath'];
+const STATES = ['idle', 'listening', 'transcribing', 'generating', 'validating',
+                'synthesizing', 'ready', 'speaking', 'cooldown', 'error'];
+
+const SCALES = { none: null, fifths: [0, 7], minpent: [0, 3, 5, 7, 10],
+                 dorian: [0, 2, 3, 5, 7, 9, 10], hirajoshi: [0, 2, 3, 7, 8] };
+const SCALE_NAMES = { none: 'Free, no scale', fifths: 'Root and fifth', minpent: 'Minor pentatonic',
+                      dorian: 'Dorian', hirajoshi: 'Hirajoshi' };
+
+// k shapes the slider: 1 is linear, higher gives the low end more room.
+const LAYER_META = {
+  gain:     { label: 'Level',          min: 0,    max: 1,    k: 1, step: 0.01 },
+  density:  { label: 'Density',        min: 0,    max: 60,   k: 2, step: 0.1,  unit: '/s' },
+  size:     { label: 'Grain size',     min: 20,   max: 4000, k: 2, step: 1,    unit: 'ms' },
+  position: { label: 'Position',       min: 0,    max: 1,    k: 1, step: 0.001 },
+  spray:    { label: 'Spray',          min: 0,    max: 1,    k: 1, step: 0.01 },
+  scan:     { label: 'Drift',          min: -0.2, max: 0.2,  k: 1, step: 0.001 },
+  pitch:    { label: 'Pitch',          min: -36,  max: 36,   k: 1, step: 0.1,  unit: 'st' },
+  spread:   { label: 'Pitch spread',   min: 0,    max: 24,   k: 1, step: 0.1,  unit: 'st' },
+  reverse:  { label: 'Reversed',       min: 0,    max: 1,    k: 1, step: 0.01 },
+  pan:      { label: 'Stereo width',   min: 0,    max: 1,    k: 1, step: 0.01 },
+  attack:   { label: 'Envelope shape', min: 0.05, max: 0.95, k: 1, step: 0.01 },
+};
+const MASTER_META = {
+  gain:      { label: 'Level',        min: 0,    max: 1,     k: 1, step: 0.01 },
+  cutoff:    { label: 'Brightness',   min: 200,  max: 18000, k: 3, step: 1,    unit: 'Hz' },
+  reverb:    { label: 'Reverb',       min: 0,    max: 1,     k: 1, step: 0.01 },
+  delay:     { label: 'Echo',         min: 0,    max: 1,     k: 1, step: 0.01 },
+  feedback:  { label: 'Echo repeats', min: 0,    max: 0.9,   k: 1, step: 0.01 },
+  delaytime: { label: 'Echo time',    min: 0.05, max: 2,     k: 2, step: 0.01, unit: 's' },
+};
+const META = {};
+for (let i = 0; i < N_LAYERS; i++) for (const k in LAYER_META) META[`/layer/${i}/${k}`] = LAYER_META[k];
+for (const k in MASTER_META) META[`/master/${k}`] = MASTER_META[k];
+
+const decimals = m => m.step >= 1 ? 0 : m.step >= 0.1 ? 1 : m.step >= 0.01 ? 2 : 3;
+const fmt = (m, v) => Number(v).toFixed(decimals(m));
+const snap = (m, v) => Number(clamp(Math.round(v / m.step) * m.step, m.min, m.max).toFixed(decimals(m)));
+const toT = (m, v) => ((clamp(v, m.min, m.max) - m.min) / (m.max - m.min)) ** (1 / m.k);
+const fromT = (m, t) => m.min + (m.max - m.min) * t ** m.k;
+
+// ── default settings (used until synth/settings.json exists) ───────────────
+const IDLE = {
+  '/layer/0/source': 'drone', '/layer/0/scale': 'fifths',
+  '/layer/0/gain': 0.5, '/layer/0/density': 5, '/layer/0/size': 2200,
+  '/layer/0/position': 0.3, '/layer/0/spray': 0.15, '/layer/0/scan': 0.004,
+  '/layer/0/pitch': -12, '/layer/0/spread': 7, '/layer/0/reverse': 0.2,
+  '/layer/0/pan': 0.5, '/layer/0/attack': 0.5,
+
+  '/layer/1/source': 'glass', '/layer/1/scale': 'minpent',
+  '/layer/1/gain': 0.22, '/layer/1/density': 1.5, '/layer/1/size': 900,
+  '/layer/1/position': 0.5, '/layer/1/spray': 0.5, '/layer/1/scan': 0.01,
+  '/layer/1/pitch': 12, '/layer/1/spread': 14, '/layer/1/reverse': 0.5,
+  '/layer/1/pan': 0.9, '/layer/1/attack': 0.3,
+
+  '/layer/2/source': 'breath', '/layer/2/scale': 'none',
+  '/layer/2/gain': 0.18, '/layer/2/density': 8, '/layer/2/size': 500,
+  '/layer/2/position': 0.5, '/layer/2/spray': 0.4, '/layer/2/scan': 0.02,
+  '/layer/2/pitch': 0, '/layer/2/spread': 4, '/layer/2/reverse': 0.3,
+  '/layer/2/pan': 1, '/layer/2/attack': 0.5,
+
+  '/layer/3/source': 'voice', '/layer/3/scale': 'none',
+  '/layer/3/gain': 0, '/layer/3/density': 6, '/layer/3/size': 350,
+  '/layer/3/position': 0.2, '/layer/3/spray': 0.05, '/layer/3/scan': 0.003,
+  '/layer/3/pitch': -5, '/layer/3/spread': 2, '/layer/3/reverse': 0.6,
+  '/layer/3/pan': 1, '/layer/3/attack': 0.5,
+
+  '/master/gain': 0.8, '/master/cutoff': 5000, '/master/reverb': 0.55,
+  '/master/delay': 0.2, '/master/feedback': 0.45, '/master/delaytime': 0.75,
+};
+
+const DEFAULT_SETTINGS = {
+  version: 2,
+  layerNames: ['Drone', 'Glass', 'Air', 'Whispers'],
+  scenes: {
+    idle:      { glide: 6,   values: IDLE },
+    listening: { glide: 1.5, values: { '/master/gain': 0.45, '/master/cutoff': 2500,
+                                       '/layer/1/gain': 0.08, '/layer/2/gain': 0.1 } },
+    thinking:  { glide: 3,   values: { '/layer/0/scan': 0.012, '/layer/1/density': 5, '/layer/1/gain': 0.3,
+                                       '/layer/3/gain': 0.12, '/master/cutoff': 7500, '/master/reverb': 0.65 } },
+    speaking:  { glide: 1.2, values: { '/master/gain': 0.4, '/master/cutoff': 1800,
+                                       '/layer/1/gain': 0.06, '/layer/3/gain': 0 } },
+    cooldown:  { glide: 8,   values: {} },
+  },
+  stateMap: { idle: 'idle', listening: 'listening', transcribing: 'thinking', generating: 'thinking',
+              validating: 'thinking', synthesizing: 'thinking', ready: 'thinking', speaking: 'speaking',
+              cooldown: 'cooldown', error: 'idle' },
+  routes: [],
+  sinkLabel: '',
+};
+
+// Anything read from settings.json passes through here: unknown keys are
+// dropped, numbers clamped, names checked. A broken file gives the defaults.
+function validValue(a, v) {
+  if (META[a]) { const n = Number(v); return Number.isFinite(n) ? [true, snap(META[a], n)] : [false]; }
+  if (a in IDLE && a.endsWith('/scale')) return [Object.hasOwn(SCALES, v), v];
+  if (a in IDLE && a.endsWith('/source')) return [NAME_RE.test(String(v)), String(v)];
+  return [false];
+}
+function sanitize(x) {
+  const s = structuredClone(DEFAULT_SETTINGS);
+  if (!x || typeof x !== 'object') return s;
+  if (Array.isArray(x.layerNames))
+    s.layerNames = s.layerNames.map((n, i) => typeof x.layerNames[i] === 'string' && x.layerNames[i].trim() ? x.layerNames[i].slice(0, 40) : n);
+  if (x.scenes && typeof x.scenes === 'object' && x.scenes.idle) {
+    const scenes = {};
+    for (const [name, sc] of Object.entries(x.scenes)) {
+      if (!SCENE_RE.test(name) || !sc || typeof sc !== 'object') continue;
+      const values = {};
+      for (const [a, v] of Object.entries(sc.values || {})) { const [ok, val] = validValue(a, v); if (ok) values[a] = val; }
+      const g = Number(sc.glide);
+      scenes[name] = { glide: Number.isFinite(g) ? clamp(g, 0, 60) : 3, values };
+    }
+    if (!scenes.idle) scenes.idle = { glide: 6, values: {} };
+    scenes.idle.values = { ...IDLE, ...scenes.idle.values };      // idle always holds every parameter
+    s.scenes = scenes;
+  }
+  for (const st of STATES) {
+    const want = x.stateMap && x.stateMap[st];
+    s.stateMap[st] = s.scenes[want] ? want : (s.scenes[s.stateMap[st]] ? s.stateMap[st] : 'idle');
+  }
+  if (Array.isArray(x.routes)) s.routes = x.routes.slice(0, 64).filter(r => r && typeof r === 'object').map(r => ({
+    on: r.on !== false,
+    input: typeof r.input === 'string' && INPUT_RE.test(r.input) ? r.input : '',
+    target: META[r.target] ? r.target : '/master/cutoff',
+    mode: r.mode === 'set' ? 'set' : 'add',
+    inMin: Number.isFinite(+r.inMin) ? +r.inMin : 0, inMax: Number.isFinite(+r.inMax) ? +r.inMax : 1,
+    outMin: Number.isFinite(+r.outMin) ? +r.outMin : 0, outMax: Number.isFinite(+r.outMax) ? +r.outMax : 1,
+    smooth: Number.isFinite(+r.smooth) ? clamp(+r.smooth, 0, 30) : 0.3,
+  }));
+  if (typeof x.sinkLabel === 'string') s.sinkLabel = x.sinkLabel.slice(0, 200);
+  return s;
+}
+
+// ── live parameter state ───────────────────────────────────────────────────
+// cur glides toward tgt. eff is cur plus whatever the routes do; the sound uses eff.
+const cur = {}, tgt = {}, tau = {}, eff = {};
+for (const [a, v] of Object.entries(IDLE)) { cur[a] = tgt[a] = v; tau[a] = 0; }
+
+function setParam(addr, value, glide) {
+  if (!(addr in cur)) return false;
+  if (typeof cur[addr] === 'string') {
+    const [ok, v] = validValue(addr, value);
+    if (!ok) { report('bad_value', addr); return false; }
+    cur[addr] = tgt[addr] = v;
+    if (addr.endsWith('/source')) ensureSource(v);
+    return true;
+  }
+  const v = Number(value);
+  if (!Number.isFinite(v)) { report('bad_value', addr); return false; }
+  tgt[addr] = clamp(v, META[addr].min, META[addr].max);
+  const g = Number.isFinite(glide) ? Math.max(0, glide) : 0.3;
+  tau[addr] = g / 4;                        // about 98% of the way after `glide` seconds
+  if (g === 0) cur[addr] = tgt[addr];
+  return true;
+}
+
+// ── scenes ─────────────────────────────────────────────────────────────────
+let S = structuredClone(DEFAULT_SETTINGS);
+let activeScene = 'idle', editScene = 'idle', lastState = null, follow = true;
+let dirty = false, edits = 0, savingAt = -1;
+
+const merged = name => ({ ...S.scenes.idle.values, ...(name !== 'idle' && S.scenes[name] ? S.scenes[name].values : {}) });
+
+function playScene(name, glide) {
+  if (!S.scenes[name]) return report('unknown_scene', String(name).slice(0, 40));
+  const g = Number.isFinite(glide) ? glide : S.scenes[name].glide;
+  for (const [a, v] of Object.entries(merged(name))) setParam(a, v, g);
+  activeScene = name;
+  $('scene').textContent = name;
+  renderTabs();
+}
+
+function oracleState(state, glide) {
+  lastState = state;
+  $('state').textContent = state;
+  const name = S.stateMap[state] || (S.scenes[state] ? state : null);
+  if (!name) return report('unknown_state', String(state).slice(0, 40));
+  if (follow) playScene(name, glide);
+}
+
+// ── routes ─────────────────────────────────────────────────────────────────
+const routeState = new WeakMap();
+const rs = r => { let s = routeState.get(r); if (!s) routeState.set(r, s = { sm: 0, has: false }); return s; };
+const mute = Array(N_LAYERS).fill(false), solo = Array(N_LAYERS).fill(false);
+
+function computeEffective(dt) {
+  for (const a in META) eff[a] = cur[a];
+  for (const r of S.routes) {                         // smooth every route's output
+    const inp = inputs.get(r.input), st = rs(r);
+    if (!r.on || !inp || typeof inp.v !== 'number') continue;
+    const x = clamp((inp.v - r.inMin) / ((r.inMax - r.inMin) || 1), 0, 1);
+    const out = r.outMin + x * (r.outMax - r.outMin);
+    if (!st.has || r.smooth <= 0) { st.sm = out; st.has = true; }
+    else st.sm += (out - st.sm) * (1 - Math.exp(-dt / (r.smooth / 4)));
+  }
+  for (const mode of ['set', 'add']) for (const r of S.routes) {   // "replaces" first, then "adds to"
+    const st = rs(r);
+    if (!r.on || r.mode !== mode || !st.has || !(r.target in eff)) continue;
+    eff[r.target] = mode === 'set' ? st.sm : eff[r.target] + st.sm;
+  }
+  const anySolo = solo.some(Boolean);
+  for (let i = 0; i < N_LAYERS; i++) if (mute[i] || (anySolo && !solo[i])) eff[`/layer/${i}/gain`] = 0;
+  for (const a in eff) eff[a] = clamp(eff[a], META[a].min, META[a].max);
+}
+const routedTargets = () => new Set(S.routes.filter(r => r.on && r.input).map(r => r.target));
+
+// ── inputs from TouchDesigner ──────────────────────────────────────────────
+const inputs = new Map();     // address -> { v, lo, hi, count, prev, rate, t, kind }
+let inputsVersion = 0;
+function noteInput(name, v, kind) {
+  if (!INPUT_RE.test(name)) return;
+  let x = inputs.get(name);
+  if (!x) {
+    if (inputs.size >= 200) return;
+    inputs.set(name, x = { lo: Infinity, hi: -Infinity, count: 0, prev: 0, rate: 0, kind });
+    inputsVersion++;
+  }
+  x.v = v; x.t = performance.now(); x.count++;
+  if (typeof v === 'number') { x.lo = Math.min(x.lo, v); x.hi = Math.max(x.hi, v); }
+}
+const inputLabel = n => n.startsWith('/in/') ? n.slice(4) : n;
+const numericInputs = () => [...inputs.entries()].filter(([, x]) => typeof x.v === 'number').map(([n]) => n);
+
+// ── audio graph ────────────────────────────────────────────────────────────
+let ctx, mix, filter, delay, delaySend, feedback, reverbGain, dryGain, master, analyser;
+const layers = [], buffers = {}, reversed = {}, loading = new Set();
+let active = 0, grainsThisSecond = 0;
+
+function buildGraph() {
+  ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'playback' });
+  mix = ctx.createGain();
+  filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.Q.value = 0.5;
+  dryGain = ctx.createGain();
+  delaySend = ctx.createGain();
+  delay = ctx.createDelay(2.5);
+  feedback = ctx.createGain();
+  const delayTone = ctx.createBiquadFilter(); delayTone.type = 'lowpass'; delayTone.frequency.value = 3000;
+  const convolver = ctx.createConvolver(); convolver.buffer = makeImpulse(7);
+  reverbGain = ctx.createGain();
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -10; limiter.knee.value = 6; limiter.ratio.value = 8;
+  limiter.attack.value = 0.01; limiter.release.value = 0.4;
+  master = ctx.createGain();
+  analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
+
+  mix.connect(filter);
+  filter.connect(dryGain).connect(limiter);
+  filter.connect(delaySend).connect(delay);
+  delay.connect(delayTone).connect(feedback).connect(delay);
+  delayTone.connect(limiter);
+  filter.connect(convolver).connect(reverbGain).connect(limiter);
+  limiter.connect(master).connect(analyser).connect(ctx.destination);
+
+  for (let i = 0; i < N_LAYERS; i++) {
+    const bus = ctx.createGain(); bus.gain.value = 0; bus.connect(mix);
+    layers.push({ i, bus, next: 0, drift: 0 });
+  }
+  addBuffer('drone', makeDrone(12));
+  addBuffer('glass', makeGlass(10));
+  addBuffer('breath', makeBreath(10));
+}
+
+function addBuffer(name, buf) {
+  buffers[name] = buf;
+  const r = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+  for (let c = 0; c < buf.numberOfChannels; c++) r.getChannelData(c).set(buf.getChannelData(c).slice().reverse());
+  reversed[name] = r;
+}
+
+// ── generated source material, all tuned to ROOT ───────────────────────────
+function normalize(buf, peak = 0.9) {
+  let m = 0;
+  for (let c = 0; c < buf.numberOfChannels; c++) for (const s of buf.getChannelData(c)) m = Math.max(m, Math.abs(s));
+  if (m > 0) for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= peak / m; }
+  return buf;
+}
+
+function makeDrone(seconds) {
+  const sr = ctx.sampleRate, n = sr * seconds, b = ctx.createBuffer(2, n, sr);
+  const partials = [[1, 1], [2, .55], [3, .3], [4, .14], [5, .08], [6, .07], [8, .03],
+                    [1.5, .35], [3, .12], [4.5, .06]];
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    for (const [ratio, amp] of partials) {
+      const f = ROOT * ratio + (c ? 0.13 : -0.13) * ratio;
+      const lfoF = 0.03 + Math.random() * 0.12, lfoP = Math.random() * 6.28, ph = Math.random() * 6.28;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        d[i] += amp * (0.6 + 0.4 * Math.sin(6.2832 * lfoF * t + lfoP)) * Math.sin(6.2832 * f * t + ph);
+      }
+    }
+  }
+  return normalize(b);
+}
+
+function makeGlass(seconds) {
+  const sr = ctx.sampleRate, n = sr * seconds, b = ctx.createBuffer(2, n, sr);
+  const ratios = [1, 2.756, 5.404, 8.933], amps = [1, .45, .22, .1], decays = [3.2, 1.6, .8, .4];
+  const degrees = SCALES.minpent;
+  let t0 = 0.05;
+  while (t0 < seconds - 0.5) {
+    const semis = degrees[Math.floor(Math.random() * degrees.length)] + 12 * Math.floor(Math.random() * 2);
+    const f0 = ROOT * 8 * 2 ** (semis / 12);
+    const pan = Math.random(), vel = 0.5 + Math.random() * 0.5;
+    const start = Math.floor(t0 * sr);
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c), g = vel * (c ? pan : 1 - pan) ** 0.5;
+      for (let k = 0; k < ratios.length; k++) {
+        const f = f0 * ratios[k], len = Math.min(n - start, Math.floor(decays[k] * 4 * sr));
+        for (let i = 0; i < len; i++) {
+          const t = i / sr;
+          d[start + i] += g * amps[k] * Math.exp(-t / decays[k] * 1.5) * Math.min(1, t * 400) * Math.sin(6.2832 * f * t);
+        }
+      }
+    }
+    t0 += 0.7 + Math.random() * 1.1;
+  }
+  return normalize(b, 0.8);
+}
+
+function makeBreath(seconds) {
+  const sr = ctx.sampleRate, n = sr * seconds, b = ctx.createBuffer(2, n, sr);
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    let low = 0, band = 0;
+    const sweepF = 0.05 + Math.random() * 0.05, sweepP = Math.random() * 6.28;
+    const swellF = 0.11 + Math.random() * 0.08, swellP = Math.random() * 6.28;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const fc = 350 + 900 * (0.5 + 0.5 * Math.sin(6.2832 * sweepF * t + sweepP));
+      const f = 2 * Math.sin(Math.PI * fc / sr), q = 0.25;
+      const x = Math.random() * 2 - 1;
+      low += f * band;
+      const high = x - low - q * band;
+      band += f * high;
+      d[i] = band * (0.25 + 0.75 * (0.5 + 0.5 * Math.sin(6.2832 * swellF * t + swellP)) ** 2);
+    }
+  }
+  return normalize(b);
+}
+
+function makeImpulse(seconds) {
+  const sr = ctx.sampleRate, n = Math.floor(sr * seconds), b = ctx.createBuffer(2, n, sr);
+  const pre = Math.floor(0.025 * sr);
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    let y = 0;
+    for (let i = pre; i < n; i++) {
+      const p = (i - pre) / (n - pre);
+      y += ((Math.random() * 2 - 1) - y) * (0.9 - 0.8 * p);
+      d[i] = y * (1 - p) ** 3;
+    }
+  }
+  return normalize(b, 0.5);
+}
+
+// ── grains ─────────────────────────────────────────────────────────────────
+const curves = {};
+function envelope(attack) {
+  const key = Math.round(attack * 20) / 20;
+  if (curves[key]) return curves[key];
+  const n = 128, c = new Float32Array(n), split = clamp(Math.round(key * (n - 1)), 1, n - 2);
+  for (let i = 0; i < n; i++)
+    c[i] = i <= split ? 0.5 - 0.5 * Math.cos(Math.PI * i / split)
+                      : 0.5 + 0.5 * Math.cos(Math.PI * (i - split) / (n - 1 - split));
+  c[0] = 0; c[n - 1] = 0;
+  return (curves[key] = c);
+}
+
+function quantize(semis, scale) {
+  if (!scale) return semis;
+  const oct = Math.floor(semis / 12), r = semis - oct * 12;
+  let best = scale[0], bd = 99;
+  for (const d of [...scale, scale[0] + 12]) { const dd = Math.abs(d - r); if (dd < bd) { bd = dd; best = d; } }
+  return oct * 12 + best;
+}
+
+function spawnGrain(L, when) {
+  const P = k => { const a = `/layer/${L.i}/${k}`; return a in eff ? eff[a] : cur[a]; };
+  const name = P('source'), buf = buffers[name];
+  if (!buf || active >= MAX_ACTIVE) return;
+
+  const size = P('size') / 1000;
+  const semis = P('pitch') + quantize(P('spread') * (Math.random() * 2 - 1), SCALES[P('scale')]);
+  const rate = 2 ** (semis / 12);
+  const read = Math.min(buf.duration, size * rate);
+  let pos = wrap(P('position') + L.drift + P('spray') * (Math.random() * 2 - 1)) * buf.duration;
+  pos = Math.min(pos, buf.duration - read);
+  const back = Math.random() < P('reverse');
+  const offset = back ? buf.duration - pos - read : pos;
+
+  const src = ctx.createBufferSource();
+  src.buffer = back ? reversed[name] : buf;
+  src.playbackRate.value = rate;
+  const g = ctx.createGain(); g.gain.value = 0;
+  g.gain.setValueCurveAtTime(envelope(P('attack')), when, size);
+  const pan = ctx.createStereoPanner();
+  pan.pan.value = P('pan') * (Math.random() * 2 - 1);
+
+  src.connect(g).connect(pan).connect(L.bus);
+  src.start(when, Math.max(0, offset));
+  src.stop(when + size + 0.02);
+  active++; grainsThisSecond++;
+  src.onended = () => { active--; src.disconnect(); g.disconnect(); pan.disconnect(); };
+}
+
+// ── scheduler ──────────────────────────────────────────────────────────────
+let last = 0;
+function tick() {
+  if (!ctx || ctx.state !== 'running') return;
+  const now = ctx.currentTime, dt = last ? Math.min(0.2, now - last) : 0;
+  last = now;
+
+  for (const a in META) {
+    if (cur[a] === tgt[a]) continue;
+    cur[a] = tau[a] > 0 ? cur[a] + (tgt[a] - cur[a]) * (1 - Math.exp(-dt / tau[a])) : tgt[a];
+    if (Math.abs(cur[a] - tgt[a]) < 1e-5) cur[a] = tgt[a];
+  }
+  computeEffective(dt);
+
+  const s = 0.05;
+  master.gain.setTargetAtTime(eff['/master/gain'], now, s);
+  filter.frequency.setTargetAtTime(eff['/master/cutoff'], now, s);
+  reverbGain.gain.setTargetAtTime(eff['/master/reverb'], now, s);
+  dryGain.gain.setTargetAtTime(1 - 0.5 * eff['/master/reverb'], now, s);
+  delaySend.gain.setTargetAtTime(eff['/master/delay'], now, s);
+  feedback.gain.setTargetAtTime(eff['/master/feedback'], now, s);
+  delay.delayTime.setTargetAtTime(eff['/master/delaytime'], now, 0.3);
+
+  const horizon = now + LOOKAHEAD;
+  for (const L of layers) {
+    const gain = eff[`/layer/${L.i}/gain`], density = eff[`/layer/${L.i}/density`];
+    L.bus.gain.setTargetAtTime(gain, now, s);
+    L.drift = wrap(L.drift + eff[`/layer/${L.i}/scan`] * dt);
+    if (gain < 0.001 || density <= 0.01) { L.next = horizon; continue; }
+    if (L.next < now) L.next = now + 0.01;
+    while (L.next < horizon) {
+      spawnGrain(L, L.next);
+      L.next += (1 / density) * (0.5 + Math.random());
+    }
+  }
+}
+
+// A worker keeps time even when Chrome treats the window as in the background.
+const ticker = new Worker(URL.createObjectURL(new Blob(
+  ['let id; onmessage = e => { clearInterval(id); id = setInterval(() => postMessage(0), e.data); };'],
+  { type: 'text/javascript' })));
+ticker.onmessage = tick;
+
+// ── recordings in synth/grains ─────────────────────────────────────────────
+let grainFiles = [];
+async function refreshFiles() {
+  try {
+    const r = await fetch('/grains.json', { cache: 'no-store' });
+    if (r.ok) { const list = await r.json(); grainFiles = Array.isArray(list) ? list.filter(n => NAME_RE.test(n)) : []; }
+  } catch { /* opened without TouchDesigner */ }
+  // The whisper layer starts on the first recording if it points at nothing.
+  const wa = '/layer/3/source', w = S.scenes.idle.values[wa];
+  if (grainFiles.length && !GENERATED.includes(w) && !grainFiles.includes(w)) {
+    S.scenes.idle.values[wa] = grainFiles[0];
+    if (inheritsFromIdle(wa)) setParam(wa, grainFiles[0]);
+  }
+  for (let i = 0; i < N_LAYERS; i++) ensureSource(cur[`/layer/${i}/source`]);
+  refreshEditor();
+  log(grainFiles.length ? `Recordings: ${grainFiles.join(', ')}` : 'No recordings in synth/grains yet.');
+}
+
+function ensureSource(name) {
+  if (ctx && !buffers[name] && !loading.has(name) && grainFiles.includes(name)) load(name);
+}
+
+async function load(name, as) {
+  as = as || name;
+  if (!NAME_RE.test(String(name)) || !NAME_RE.test(String(as))) return report('bad_name', String(name).slice(0, 40));
+  loading.add(as);
+  try {
+    const res = await fetch(`/grains/${name}.wav`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    addBuffer(as, await ctx.decodeAudioData(await res.arrayBuffer()));
+    log(`Loaded ${name}` + (as !== name ? ` as ${as}` : ''));
+    sendTD({ event: 'loaded', name, as });
+  } catch (e) {
+    report('load_failed', `${name}: ${e.message}`);
+  } finally {
+    loading.delete(as);
+  }
+}
+
+// ── TouchDesigner connection ───────────────────────────────────────────────
+let ws, retry = 500;
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    retry = 500; wsStatus(true);
+    sendTD({ event: 'hello', protocol_version: 2, sample_rate: ctx.sampleRate, audio: ctx.state });
+  };
+  ws.onmessage = e => {
+    let m;
+    try { m = JSON.parse(e.data); } catch { return report('not_json', ''); }
+    for (const x of Array.isArray(m) ? m : [m]) handle(x);
+  };
+  ws.onclose = () => { wsStatus(false); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+}
+function wsStatus(up) {
+  const e = $('ws'); e.textContent = up ? 'connected' : 'waiting'; e.className = up ? 'on' : 'bad';
+  updateDirty();
+}
+
+function handle(m) {
+  if (!m || typeof m !== 'object') return;
+  if (typeof m.event === 'string') return tdEvent(m);
+  const glide = m.glide === undefined ? undefined : Number(m.glide);
+  if (m.inputs && typeof m.inputs === 'object')
+    for (const [k, v] of Object.entries(m.inputs)) {
+      const n = Number(v);
+      if (typeof v !== 'boolean' && Number.isFinite(n)) noteInput(k.startsWith('/') ? k : '/in/' + k, n, 'input');
+    }
+  if (m.set && typeof m.set === 'object') for (const [a, v] of Object.entries(m.set)) incoming(a, v, glide);
+  if (typeof m.address === 'string') {
+    if (m.address === '/scene') { noteInput('/scene', String(m.value).slice(0, 40), 'state'); oracleState(String(m.value), glide); }
+    else if (m.address === '/load') load(m.value, m.as);
+    else incoming(m.address, m.value, glide);
+  }
+}
+
+function incoming(a, v, glide) {
+  if (a in cur) {
+    noteInput(a, typeof v === 'number' ? v : String(v).slice(0, 40), 'param');
+    setParam(a, v, glide);
+    return;
+  }
+  const n = Number(v);
+  if (typeof v !== 'boolean' && v !== '' && Number.isFinite(n)) noteInput(a, n, 'input');
+  else report('bad_value', String(a).slice(0, 60));
+}
+
+function tdEvent(m) {
+  if (m.event === 'saved') {
+    if (savingAt === edits) { dirty = false; }
+    savingAt = -1; updateDirty(); log('Saved to synth/settings.json');
+  } else if (m.event === 'save_failed') {
+    savingAt = -1; updateDirty(); log(`Not saved: ${String(m.detail || '').slice(0, 120)}`);
+  }
+}
+
+function sendTD(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function report(code, detail) { log(`${code} ${detail}`); sendTD({ event: 'error', code, detail }); }
+
+// ── settings: load, save, revert ───────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const r = await fetch('/settings.json', { cache: 'no-store' });
+    if (r.ok) { log('Settings loaded from synth/settings.json'); return sanitize(await r.json()); }
+  } catch { /* first run, or no TouchDesigner */ }
+  log('Using the built-in settings. Press Save to create synth/settings.json.');
+  return structuredClone(DEFAULT_SETTINGS);
+}
+
+function touch() { edits++; dirty = true; updateDirty(); }
+function updateDirty() {
+  const up = ws && ws.readyState === 1;
+  $('save').disabled = !dirty || !up || savingAt >= 0;
+  $('save').textContent = savingAt >= 0 ? 'Saving' : 'Save';
+  const d = $('dirty');
+  d.textContent = dirty ? (up ? 'Unsaved changes' : 'Unsaved changes, TouchDesigner not connected') : 'Saved';
+  d.className = dirty ? 'bad' : '';
+}
+function save() {
+  if (!dirty || !ws || ws.readyState !== 1) return;
+  savingAt = edits;
+  sendTD({ event: 'save_settings', settings: S });
+  updateDirty();
+}
+async function revert() {
+  S = await loadSettings();
+  dirty = false;
+  editScene = S.scenes[editScene] ? editScene : 'idle';
+  playScene(S.scenes[activeScene] ? activeScene : 'idle', 1);
+  renderAll();
+  refreshFiles();
+}
+
+// ── the editor ─────────────────────────────────────────────────────────────
+const rows = {};   // address -> { row, range, num, sel, reset, live }
+
+function renderAll() { renderTabs(); renderCards(); renderRoutes(); renderStateMap(); updateDirty(); }
+
+function renderTabs() {
+  const box = $('tabs'); box.textContent = '';
+  for (const name of Object.keys(S.scenes)) {
+    const b = el('button', { class: 'tab' + (name === activeScene ? ' playing' : ''), textContent: name,
+                             title: name === activeScene ? 'Playing now' : '' });
+    b.setAttribute('aria-pressed', String(name === editScene));
+    b.onclick = () => { editScene = name; if (!follow) playScene(name); renderTabs(); refreshEditor(); };
+    box.append(b);
+  }
+  $('glide').value = S.scenes[editScene].glide;
+  $('delscene').disabled = editScene === 'idle';
+  const uses = STATES.filter(st => S.stateMap[st] === editScene);
+  $('scenehint').textContent = (editScene === 'idle'
+    ? 'Idle is the home sound. Every other scene starts from it and changes only the values marked in its own colour.'
+    : `Editing ${editScene}. Marked values are its own; the rest follow idle. Reset gives a value back to idle.`)
+    + (uses.length ? ` Plays when the Oracle is ${uses.join(', ')}.` : ' No Oracle state plays it yet.');
+}
+
+function fillSelect(sel, groups, value) {
+  sel.textContent = '';
+  for (const [label, items] of groups) {
+    if (!items.length) continue;
+    const g = el('optgroup', { label });
+    for (const [v, text] of items) g.append(el('option', { value: v, textContent: text }));
+    sel.append(g);
+  }
+  if (![...sel.options].some(o => o.value === value)) sel.append(el('option', { value, textContent: `${value} (missing)` }));
+  sel.value = value;
+}
+function sourceGroups() {
+  return [['Generated', GENERATED.map(n => [n, n])], ['Recordings in synth/grains', grainFiles.map(n => [n, n])]];
+}
+
+function paramRow(addr) {
+  const reset = el('button', { class: 'reset', textContent: 'Reset', title: "Use idle's value" });
+  reset.onclick = () => resetValue(addr);
+  const live = el('span', { class: 'live', title: 'Playing now, including routes' });
+  if (!META[addr]) {
+    const isSource = addr.endsWith('/source');
+    const sel = el('select', { 'aria-label': isSource ? 'Sound' : 'Scale' });
+    sel.onchange = () => editValue(addr, sel.value);
+    const row = el('div', { class: 'prow' }, el('span', { class: 'plabel', textContent: isSource ? 'Sound' : 'Scale' }), sel, reset);
+    rows[addr] = { row, sel, reset, isSource };
+    return row;
+  }
+  const m = META[addr];
+  const range = el('input', { type: 'range', min: 0, max: 1000, step: 1, 'aria-label': m.label });
+  const num = el('input', { type: 'number', min: m.min, max: m.max, step: m.step, 'aria-label': m.label });
+  range.oninput = () => editValue(addr, snap(m, fromT(m, range.value / 1000)));
+  num.onchange = () => editValue(addr, Number(num.value));
+  const row = el('div', { class: 'prow' },
+    el('span', { class: 'plabel', textContent: m.label + (m.unit ? ` ${m.unit}` : '') }), range, num, reset, live);
+  rows[addr] = { row, range, num, reset, live };
+  return row;
+}
+
+function renderCards() {
+  const box = $('cards'); box.textContent = '';
+  for (const k in rows) delete rows[k];
+  for (let i = 0; i < N_LAYERS; i++) {
+    const name = el('input', { value: S.layerNames[i], 'aria-label': `Layer ${i + 1} name` });
+    name.onchange = () => { S.layerNames[i] = name.value.trim().slice(0, 40) || `Layer ${i + 1}`; touch(); renderRoutes(); };
+    const mb = el('button', { textContent: 'Mute', title: 'Silence this layer while tuning (not saved)' });
+    const sb = el('button', { textContent: 'Solo', title: 'Hear only this layer while tuning (not saved)' });
+    mb.setAttribute('aria-pressed', String(mute[i])); sb.setAttribute('aria-pressed', String(solo[i]));
+    mb.onclick = () => { mute[i] = !mute[i]; mb.setAttribute('aria-pressed', String(mute[i])); };
+    sb.onclick = () => { solo[i] = !solo[i]; sb.setAttribute('aria-pressed', String(solo[i])); };
+    const card = el('div', { class: 'card' }, el('div', { class: 'lhead' }, name, mb, sb));
+    card.append(paramRow(`/layer/${i}/source`), paramRow(`/layer/${i}/scale`));
+    for (const k in LAYER_META) card.append(paramRow(`/layer/${i}/${k}`));
+    box.append(card);
+  }
+  const mcard = el('div', { class: 'card' }, el('div', { class: 'lhead' }, el('h2', { textContent: 'Whole room' })));
+  for (const k in MASTER_META) mcard.append(paramRow(`/master/${k}`));
+  box.append(mcard);
+  refreshEditor();
+}
+
+function refreshEditor() {
+  const vals = merged(editScene), own = editScene === 'idle' ? {} : S.scenes[editScene].values;
+  for (const [addr, r] of Object.entries(rows)) {
+    const v = vals[addr], isOwn = addr in own;
+    r.row.classList.toggle('own', isOwn);
+    r.reset.hidden = !isOwn;
+    if (r.sel) {
+      if (document.activeElement === r.sel) continue;
+      fillSelect(r.sel, r.isSource ? sourceGroups() : [['Scale', Object.keys(SCALES).map(k => [k, SCALE_NAMES[k]])]], v);
+    } else {
+      const m = META[addr];
+      if (document.activeElement !== r.range) r.range.value = Math.round(toT(m, v) * 1000);
+      if (document.activeElement !== r.num) r.num.value = fmt(m, v);
+    }
+  }
+}
+
+function inheritsFromIdle(addr) { return activeScene === 'idle' || !(addr in S.scenes[activeScene].values); }
+
+function editValue(addr, v) {
+  if (META[addr]) { v = Number(v); if (!Number.isFinite(v)) return refreshEditor(); v = snap(META[addr], v); }
+  S.scenes[editScene].values[addr] = v;
+  touch();
+  if (editScene === activeScene || (editScene === 'idle' && inheritsFromIdle(addr))) setParam(addr, v, 0.15);
+  refreshEditor();
+}
+
+function resetValue(addr) {
+  delete S.scenes[editScene].values[addr];
+  touch();
+  if (editScene === activeScene) setParam(addr, S.scenes.idle.values[addr], 0.5);
+  refreshEditor();
+}
+
+function renderStateMap() {
+  const box = $('statemap'); box.textContent = '';
+  for (const st of STATES) {
+    const sel = el('select', { 'aria-label': `Scene for ${st}` });
+    fillSelect(sel, [['Scenes', Object.keys(S.scenes).map(n => [n, n])]], S.stateMap[st]);
+    sel.onchange = () => {
+      S.stateMap[st] = sel.value; touch(); renderTabs();
+      if (follow && st === lastState) playScene(sel.value);
+    };
+    box.append(el('label', {}, el('span', { textContent: st }), sel));
+  }
+}
+
+// Routes are written as a sentence, so each one reads as what it does.
+let routeLive = [], routeInputSelects = [], routesInputsVersion = -1;
+
+function targetGroups() {
+  const g = [];
+  for (let i = 0; i < N_LAYERS; i++)
+    g.push([S.layerNames[i], Object.keys(LAYER_META).map(k => [`/layer/${i}/${k}`, LAYER_META[k].label])]);
+  g.push(['Whole room', Object.keys(MASTER_META).map(k => [`/master/${k}`, MASTER_META[k].label])]);
+  return g;
+}
+function inputGroups(current) {
+  const names = numericInputs();
+  if (current && !names.includes(current)) names.unshift(current);
+  return [['Inputs', names.map(n => [n, inputLabel(n)])]];
+}
+function defaultOut(r) {
+  const m = META[r.target];
+  if (r.mode === 'set') { r.outMin = m.min; r.outMax = m.max; }
+  else { r.outMin = 0; r.outMax = snap(m, (m.max - m.min) * 0.25); }
+}
+function newRoute(input) {
+  const x = inputs.get(input);
+  const r = { on: true, input: input || '', target: '/master/cutoff', mode: 'add', inMin: 0, inMax: 1,
+              outMin: 0, outMax: 0, smooth: 0.3 };
+  if (x && Number.isFinite(x.lo) && x.hi > x.lo) { r.inMin = x.lo; r.inMax = x.hi; }
+  defaultOut(r);
+  S.routes.push(r); touch(); renderRoutes();
+}
+
+function renderRoutes() {
+  const box = $('routes'); box.textContent = '';
+  routeLive = []; routeInputSelects = []; routesInputsVersion = inputsVersion;
+  if (!S.routes.length) box.append(el('p', { class: 'hint', textContent: 'No routes yet. Press Route next to an input, or Add route.' }));
+  S.routes.forEach((r, idx) => {
+    const numIn = (key, label) => {
+      const n = el('input', { type: 'number', step: 'any', value: r[key], 'aria-label': label });
+      n.onchange = () => { const v = Number(n.value); if (Number.isFinite(v)) { r[key] = v; touch(); } else n.value = r[key]; };
+      return n;
+    };
+    const on = el('input', { type: 'checkbox', checked: r.on, 'aria-label': 'Route on' });
+    on.onchange = () => { r.on = on.checked; card.classList.toggle('off', !r.on); touch(); };
+
+    const inSel = el('select', { 'aria-label': 'Input' });
+    fillSelect(inSel, inputGroups(r.input), r.input);
+    if (!r.input) inSel.options[inSel.options.length - 1].textContent = 'choose an input';
+    inSel.onchange = () => { r.input = inSel.value; rs(r).has = false; touch(); };
+    routeInputSelects.push([inSel, r]);
+
+    const tSel = el('select', { 'aria-label': 'Parameter' });
+    fillSelect(tSel, targetGroups(), r.target);
+    tSel.onchange = () => { r.target = tSel.value; defaultOut(r); touch(); renderRoutes(); };
+
+    const mSel = el('select', { 'aria-label': 'How' });
+    fillSelect(mSel, [['How', [['add', 'adds'], ['set', 'sets it to']]]], r.mode);
+    mSel.onchange = () => { r.mode = mSel.value; defaultOut(r); touch(); renderRoutes(); };
+
+    const learn = el('button', { textContent: 'Learn range', title: 'Use the lowest and highest values seen so far' });
+    learn.onclick = () => {
+      const x = inputs.get(r.input);
+      if (!x || !(x.hi > x.lo)) return log('Learn range: this input has not moved yet.');
+      r.inMin = x.lo; r.inMax = x.hi; touch(); renderRoutes();
+    };
+    const rm = el('button', { class: 'rm', textContent: 'Remove' });
+    rm.onclick = () => { S.routes.splice(idx, 1); touch(); renderRoutes(); };
+    const now = el('span', { class: 'now' });
+    routeLive.push([now, r]);
+
+    const m = META[r.target];
+    const card = el('div', { class: 'route' + (r.on ? '' : ' off') },
+      rm, on, ' ', inSel, ' moves ', tSel, el('br'),
+      'As it goes from ', numIn('inMin', 'Input low'), ' to ', numIn('inMax', 'Input high'), ' ', learn, el('br'),
+      'it ', mSel, ' ', numIn('outMin', 'Output low'), ' to ', numIn('outMax', 'Output high'),
+      m.unit ? ` ${m.unit}` : '', r.mode === 'add' ? ' on top of the scene' : '', el('br'),
+      'smoothed over ', numIn('smooth', 'Smoothing seconds'), ' s. Now ', now);
+    box.append(card);
+  });
+}
+
+// ── live readouts ──────────────────────────────────────────────────────────
+const inputRows = new Map();
+function updateInputs() {
+  const nowMs = performance.now();
+  $('noinputs').hidden = inputs.size > 0;
+  for (const [name, x] of inputs) {
+    let r = inputRows.get(name);
+    if (!r) {
+      const bar = el('i'), val = el('td'), range = el('td'), rate = el('td');
+      const btn = el('button', { textContent: 'Route', title: 'Make this input move a parameter' });
+      btn.onclick = () => newRoute(name);
+      if (typeof x.v !== 'number') btn.hidden = true;
+      const kind = x.kind === 'param' ? ' (sets a parameter directly)' : x.kind === 'state' ? ' (Oracle state)' : '';
+      const tr = el('tr', {}, el('td', { textContent: inputLabel(name) + kind }), val,
+                    el('td', {}, el('div', { class: 'vbar' }, bar)), range, rate, el('td', {}, btn));
+      $('inputs').append(tr);
+      inputRows.set(name, r = { tr, bar, val, range, rate });
+    }
+    r.tr.classList.toggle('stale', nowMs - x.t > 3000);
+    if (typeof x.v === 'number') {
+      r.val.textContent = Math.abs(x.v) >= 100 ? x.v.toFixed(0) : x.v.toFixed(3);
+      r.bar.style.width = `${x.hi > x.lo ? ((x.v - x.lo) / (x.hi - x.lo)) * 100 : 50}%`;
+      r.range.textContent = `${+x.lo.toFixed(3)} to ${+x.hi.toFixed(3)}`;
+    } else r.val.textContent = x.v;
+    r.rate.textContent = x.rate;
+  }
+  // New inputs appear in the routes' input lists without rebuilding while someone is choosing.
+  if (routesInputsVersion !== inputsVersion && !routeInputSelects.some(([s]) => s === document.activeElement)) {
+    for (const [sel, r] of routeInputSelects) fillSelect(sel, inputGroups(r.input), r.input);
+    routesInputsVersion = inputsVersion;
+  }
+  for (const [span, r] of routeLive) {
+    const st = rs(r), m = META[r.target];
+    span.textContent = !r.input ? 'no input chosen' : st.has ? `${r.mode === 'add' && st.sm >= 0 ? '+' : ''}${fmt(m, st.sm)}` : 'waiting for the input';
+  }
+  const routed = routedTargets();
+  for (const [addr, r] of Object.entries(rows)) {
+    if (!r.live) continue;
+    r.live.textContent = fmt(META[addr], eff[addr] ?? cur[addr]);
+    r.live.classList.toggle('routed', routed.has(addr));
+  }
+}
+setInterval(() => {
+  for (const x of inputs.values()) { x.rate = x.count - x.prev; x.prev = x.count; }
+  $('gps').textContent = grainsThisSecond; grainsThisSecond = 0;
+}, 1000);
+
+function drawMeter() {
+  const c = $('meter'), g = c.getContext('2d'), data = new Float32Array(analyser.fftSize);
+  let peak = 0;
+  (function frame() {
+    analyser.getFloatTimeDomainData(data);
+    let sum = 0; for (const s of data) sum += s * s;
+    const db = 20 * Math.log10(Math.sqrt(sum / data.length) + 1e-9);
+    const w = Math.max(0, (db + 60) / 60) * c.width;
+    peak = Math.max(w, peak - 6);
+    g.clearRect(0, 0, c.width, c.height);
+    g.fillStyle = '#2b4148'; g.fillRect(0, 0, w, c.height);
+    g.fillStyle = '#8fd3c7'; g.fillRect(peak - 3, 0, 3, c.height);
+    requestAnimationFrame(frame);
+  })();
+}
+
+// ── output device ──────────────────────────────────────────────────────────
+async function listOutputs() {
+  const sel = $('sink');
+  if (!ctx.setSinkId) { sel.disabled = true; return log('This browser cannot choose an output; use Chrome 110 or later.'); }
+  let devs = await navigator.mediaDevices.enumerateDevices();
+  if (!devs.some(d => d.label)) {
+    // Chrome hides device names until a media permission exists. The launcher's
+    // --use-fake-ui-for-media-stream grants it silently; the stream closes at once.
+    try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(t => t.stop()); } catch {}
+    devs = await navigator.mediaDevices.enumerateDevices();
+  }
+  const outs = devs.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'default');
+  for (const d of outs) sel.add(new Option(d.label || 'Unnamed output', d.deviceId));
+  sel.onchange = async () => {
+    await ctx.setSinkId(sel.value);
+    S.sinkLabel = sel.value ? sel.selectedOptions[0].text : '';
+    touch(); log(`Output: ${sel.selectedOptions[0].text}`);
+  };
+  const want = (S.sinkLabel || SINK_HINT).toLowerCase();
+  if (want) {
+    const m = outs.find(d => d.label.toLowerCase().includes(want));
+    if (m) { sel.value = m.deviceId; await ctx.setSinkId(m.deviceId); log(`Output: ${m.label}`); }
+    else report('no_output', `nothing matches "${want}"`);
+  }
+}
+
+// ── page wiring ────────────────────────────────────────────────────────────
+async function startAudio() {
+  await ctx.resume();
+  const running = ctx.state === 'running', e = $('ac');
+  e.textContent = running ? 'running' : 'blocked, press Start sound'; e.className = running ? 'on' : 'bad';
+  $('start').hidden = running;
+}
+
+$('follow').onchange = e => {
+  follow = e.target.checked;
+  if (follow && lastState) oracleState(lastState); else if (!follow) playScene(editScene);
+};
+$('glide').onchange = e => {
+  const g = Number(e.target.value);
+  if (Number.isFinite(g)) { S.scenes[editScene].glide = clamp(g, 0, 60); touch(); }
+  e.target.value = S.scenes[editScene].glide;
+};
+$('play').onclick = () => playScene(editScene);
+$('addscene').onclick = () => {
+  const name = $('newname').value.trim();
+  if (!SCENE_RE.test(name)) return log('Scene names can use letters, digits, - and _ (up to 32).');
+  if (S.scenes[name]) return log(`There is already a scene called ${name}.`);
+  S.scenes[name] = { glide: 3, values: {} };
+  editScene = name; $('newname').value = '';
+  touch(); renderTabs(); renderStateMap(); refreshEditor();
+  if (!follow) playScene(name);
+};
+$('delscene').onclick = () => {
+  if (editScene === 'idle') return;
+  const gone = editScene;
+  delete S.scenes[gone];
+  for (const st of STATES) if (S.stateMap[st] === gone) S.stateMap[st] = 'idle';
+  editScene = 'idle';
+  if (activeScene === gone) playScene('idle');
+  touch(); renderTabs(); renderStateMap(); refreshEditor();
+  log(`Deleted ${gone}. States that used it now play idle.`);
+};
+$('addroute').onclick = () => newRoute(numericInputs()[0] || '');
+$('save').onclick = save;
+$('revert').onclick = revert;
+$('start').onclick = startAudio;
+addEventListener('pointerdown', startAudio);
+addEventListener('keydown', e => {
+  startAudio();
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+});
+
+(async function boot() {
+  buildGraph();
+  S = await loadSettings();
+  for (const [a, v] of Object.entries(merged('idle'))) setParam(a, v, 0);
+  computeEffective(0);
+  renderAll();
+  $('start').hidden = false;
+  startAudio();
+  ticker.postMessage(TICK_MS);
+  setInterval(updateInputs, 200);
+  drawMeter();
+  await refreshFiles();
+  listOutputs();
+  connect();
+})();
+</script>
+</body>
+</html>

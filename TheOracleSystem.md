@@ -631,10 +631,11 @@ Any failure → canned line. Log the rejected text so you can review what happen
 | Sensor must fall before re-arming | required | A sensor stuck high retriggering forever |
 | Per-stage deadline | 3–10 s | A hung model freezing the piece |
 | Cancelled-session results | discarded | Late audio from an abandoned interaction |
-| Conversation memory | none — every turn is fresh | Multi-turn jailbreaks, cross-visitor leakage |
+| Conversation memory | one visit, then discarded | Cross-visitor leakage; caps a multi-turn jailbreak at one short visit |
+| Blocked attempts before the visit ends | 3 | A game that has stopped being one |
 | Web search calls | 1 per interaction, 3 s timeout | Cost, latency, and a visitor driving your queries |
 
-The memory row is the strongest guardrail in that table and it is free. Because no state carries between visitors, an attacker gets one shot with 300 characters and no way to build up context. Stateless-by-default also means the next visitor never hears an echo of the previous one, which matters as much for privacy as for safety.
+The memory row is the strongest guardrail in that table and it is free. It changed when the visit shape did: the Oracle now remembers one conversation, because the conversation is the piece. What has not changed is that nothing crosses between visitors, so an attacker gets one short visit with a turn cap and no way to build context that outlives them — and the next visitor never hears an echo of the previous one, which matters as much for privacy as for safety. A visit that is attacked three times ends early, which is `instructions.md`'s own instruction turned into code.
 
 **Kill switch:** a physical key or a TD button sending `/mute 1` that forces the engine to `IDLE` and stops playback mid-sentence. Have it before opening night.
 
@@ -885,6 +886,37 @@ Eight phases. Two ordering rules: **prove the audio hardware before any software
 | 4 | `guard.py` + test file | 20 attack strings across 3 languages all deflected; 20 normal inputs, none falsely flagged | 1 day |
 | 5 | `audio_in.py` + state machine, wired to Phase 0 | Full loop from a keyboard trigger; per-stage latency logged | 1 day |
 | 6 | Sensor, cancellation, deadlines, recovery, `websearch.py` if used | Cancel during every stage; unplug the sensor; kill Ollama mid-generation; all recover to idle | 1–2 days |
+
+### Where the build actually is
+
+Phase 0 is complete: `scripts/smoke_test.py` drives the whole chain from a TouchDesigner trigger,
+with real speech and real audio rather than the hardcoded WAV the phase asked for.
+
+Phases 1 and 2 are written as `engine/stt.py` and `engine/tts.py`. Both run on their own
+(`python -m engine.stt --loop`, `python -m engine.tts --audition`), which is how their acceptance
+tests are meant to be run. Two things in those phases are code-complete but not yet *accepted*,
+because acceptance here means a person judging: the three-language accuracy pass, and the Finnish
+voice audition. Neither is a measurement.
+
+Phase 3 is written as `engine/corpus.py`, `engine/schema.py` and `engine/llm.py`. A `Visit` is the
+whole of the Oracle's memory: it holds one person's language, fate sheet and turns, and is discarded
+when they leave. The message shape is fixed and tested — one system message carrying the corpus,
+identical every turn so Ollama caches it; the visit's earlier turns; then one user message whose
+trusted blocks come first and whose `<visitor_speech>` comes last. Run `python -m engine.llm
+--suite` for its acceptance test.
+
+Phase 4 is `engine/guard.py` and `tests/guard_cases.yaml`. Layers 1, 3, 4 and 5 live in that
+module; Layer 2 is `llm.py` building the message, which is a shape rather than a check and does
+more work than the rest put together. The canned lines are in `stories/fallbacks.yaml`, in every
+language the piece speaks, and they escalate: the first blocked attempt gets the long line, the
+second a shorter one, the third "No. Go now." and the end of the visit. **Those lines need a native
+speaker's eye before opening** — they are the only sentences guaranteed to be heard exactly as
+written.
+
+The reply parser is deliberately forgiving about form and strict about substance. Fenced JSON, a
+preamble, a leaked `<think>` block, markdown inside `text`, an invented `mood`, an unknown `fate`
+key and trailing chat all recover; only an empty `text` fails, and that triggers one retry with a
+terse structural correction before the turn is abandoned.
 
 **Measure VRAM at the end of Phase 1 and Phase 3, with TouchDesigner running.** That is the moment you learn whether `qwen3.5:4b` and GPU Whisper actually coexist with your scene, and it is much cheaper to find out then than in Phase 6.
 

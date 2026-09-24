@@ -69,8 +69,7 @@ def find_device(spec, kind: str = "input"):
     Shared with check_env.py so the test rig and the diagnostic can never
     disagree about which device a name refers to.
     """
-    sys.path.insert(0, str(REPO / "scripts"))
-    import audio_devices as ad
+    from engine import audio_devices as ad
     try:
         index, note = ad.resolve_reported(spec, kind)
     except ad.DeviceError as e:
@@ -129,8 +128,7 @@ def record() -> "object":
     behaves the same on every host API.
     """
     import sounddevice as sd
-    sys.path.insert(0, str(REPO / "scripts"))
-    import audio_devices as ad
+    from engine import audio_devices as ad
 
     device = find_device(AUDIO.get("input_device"), "input")
     rate = ad.native_samplerate(device, "input")

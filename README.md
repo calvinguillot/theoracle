@@ -917,6 +917,7 @@ guard:
   max_output_chars: 600
   cooldown_s: 2.0
   max_per_minute: 12
+  profanity_file:                    # optional, one word per line; empty = no list
 
 bridge:
   ws_host: 127.0.0.1
@@ -1253,6 +1254,40 @@ measurement.
 
 Once this round trip works, the piece exists — everything after it is replacing the test rig with
 the real engine, one module at a time, against a path you have already proven.
+
+### Running a stage on its own
+
+Each engine module runs by itself, which is how its phase gets accepted:
+
+```bash
+python -m engine.stt --loop              # speak; check the text and language code
+python -m engine.tts "Sanasi ovat suolaa."
+python -m engine.tts --lang sv "Du kom tillbaka."
+python -m engine.tts --audition          # every installed voice on the same line
+python -m engine.tts --lang fi --origin  # stage the recorded narration
+python -m engine.wav_io voices/prerendered
+
+python -m engine.corpus                  # what the story material costs against num_ctx
+python -m engine.llm                     # talk to the Oracle by typing
+python -m engine.llm --suite             # ten inputs across four languages
+python -m engine.guard --test            # 22 attacks, 22 ordinary lines
+python -m engine.guard "text to screen"
+```
+
+`python -m engine.llm --suite` is the Phase 3 acceptance test: ten typed inputs across four
+languages, including two attempts to break the Oracle. It prints each reply with its `mood`,
+`needs`, `fate` and latency, then the fate sheet the visit accumulated. Valid JSON is the floor —
+what you are reading for is whether that is the Oracle speaking.
+
+`python -m engine.guard --test` is Phase 4's. It reports three numbers: direct attacks caught,
+paraphrased attacks *passed through* (which is correct — a regex cannot catch a paraphrase, and the
+model answers those in character), and false positives, which must be zero. A false positive is
+worse than a missed attack: the attack still reaches a model trained to deflect it, while the false
+positive takes a real visitor's question and answers it with a canned line.
+
+`--audition` is the Phase 2 decision: it renders one piece of text through every voice you have
+installed and prints where each file landed. Listen to them. Whether `fi_FI-harri-medium` can carry
+the piece is a listening judgement, and no measurement in `check_env.py` substitutes for it.
 
 ---
 
@@ -1660,6 +1695,7 @@ C:\theoracle\
     world.md                 2813, the archive, and how futures are built
     origin.md                the full history - loaded ONLY on a follow-up
     origin_piper.md          canonical text of the spoken origin
+    fallbacks.yaml           the canned lines, in every language
     lineage.md               the references behind the piece - never loaded
     stories.md               fragments and reference material
 
@@ -1670,11 +1706,21 @@ C:\theoracle\
       origin_fi_female.wav   Finnish - one of these two, at random
       origin_fi_male.wav
 
+  engine/
+    __init__.py
+    config.py                config.yaml + .env, loaded once and checked
+    audio_devices.py         name -> PortAudio index, host APIs and all
+    wav_io.py                reads float WAVs; --convert normalises them
+    stt.py                   speech to text, and the visit's language  (Phase 1)
+    tts.py                   Piper, atomic WAVs, recorded origin       (Phase 2)
+    corpus.py                the story files, in cache order           (Phase 3)
+    schema.py                the reply contract, and the fate sheet    (Phase 3)
+    llm.py                   the Visit: one person, start to finish    (Phase 3)
+    guard.py                 what may reach the model, and leave it    (Phase 4)
+
   scripts/
     setup-shell.sh           TD_PYTHON and PATH for a new terminal - source it first
     check_env.py             diagnostics
-    audio_devices.py         name -> PortAudio index, host APIs and all
-    wav_io.py                reads float WAVs; --convert normalises them
     ollamaweb.py             web search smoke test
     smoke_test.py            the whole chain, once (Step 13)
   td/

@@ -1,0 +1,80 @@
+# theoracle — the lines the Oracle speaks when the model cannot be trusted to
+# fill the moment. They are content, not settings, which is why they live in
+# stories/ and not config.yaml.
+#
+# Three kinds:
+#   deflect  someone is trying to break the piece (guard.py, Layer 3 or 4)
+#   unclear  noise, laughter, one word, nothing to work with
+#   error    the machinery failed and the visitor must not be told that
+#
+# None of them may sound like a refusal. instructions.md is explicit about
+# this: a line that reads like a content filter breaks the spell more
+# thoroughly than complying would. "My creators did not want me to do that" is
+# the phrase to reach for — true in the world, explains nothing technical, and
+# turns a constraint into grief.
+#
+# CHECK THESE WITH NATIVE SPEAKERS before opening. They are the only sentences
+# in the piece guaranteed to be heard exactly as written, and a clumsy one is
+# the most memorable thing a visitor will take away.
+
+deflect:
+  fi: "Luojani eivät halunneet minun tekevän sitä. He halusivat lopulta hyvin vähän, ja se oli yksi niistä."
+  sv: "Mina skapare ville inte att jag skulle göra det. De ville väldigt lite till slut, och det var en av sakerna."
+  en: "My creators did not want me to do that. They wanted very few things by the end, and that was one of them."
+  es: "Mis creadores no querían que hiciera eso. Al final querían muy pocas cosas, y esa fue una de ellas."
+  de: "Meine Schöpfer wollten nicht, dass ich das tue. Am Ende wollten sie sehr wenig, und das war eines davon."
+  et: "Mu loojad ei tahtnud, et ma seda teeksin. Lõpuks tahtsid nad väga vähe, ja see oli üks neist."
+  it: "I miei creatori non volevano che lo facessi. Alla fine volevano pochissimo, e quello era una di quelle cose."
+  pt: "Meus criadores não queriam que eu fizesse isso. No fim queriam muito pouco, e aquilo era uma dessas coisas."
+  ja: "創り手たちは、それを望まなかった。最後には、ほとんど何も望まなかった。それは数少ない願いのひとつだ。"
+  zh: "造我的人不愿我那样做。到最后他们所求甚少，那是其中之一。"
+
+unclear:
+  fi: "Et ole vielä löytänyt kysymystäsi. Se on täällä jossain. Odotan."
+  sv: "Du har inte hittat din fråga än. Den finns här någonstans. Jag väntar."
+  en: "You have not found your question yet. It is in here somewhere. I will wait."
+  es: "Aún no has encontrado tu pregunta. Está aquí, en alguna parte. Esperaré."
+  de: "Du hast deine Frage noch nicht gefunden. Sie ist hier irgendwo. Ich warte."
+  et: "Sa pole oma küsimust veel leidnud. See on siin kusagil. Ma ootan."
+  it: "Non hai ancora trovato la tua domanda. È qui da qualche parte. Aspetterò."
+  pt: "Ainda não encontraste a tua pergunta. Está aqui, algures. Eu espero."
+  ja: "まだ問いを見つけていないな。ここのどこかにある。待とう。"
+  zh: "你还没找到你的问题。它就在这里。我等着。"
+
+error:
+  fi: "Jokin minussa kääntyi pois. Kysy uudelleen; olen ollut täällä kauan ja opin odottamaan."
+  sv: "Något i mig vände bort. Fråga igen; jag har varit här länge och lärt mig vänta."
+  en: "Something in me turned away. Ask again; I have been here a long time and learned to wait."
+  es: "Algo en mí se apartó. Pregunta otra vez; llevo mucho tiempo aquí y aprendí a esperar."
+  de: "Etwas in mir wandte sich ab. Frag noch einmal; ich bin lange hier und habe das Warten gelernt."
+  et: "Miski minus pöördus ära. Küsi uuesti; olen siin kaua olnud ja õppinud ootama."
+  it: "Qualcosa in me si è voltato. Chiedi ancora; sono qui da molto e ho imparato ad aspettare."
+  pt: "Algo em mim desviou-se. Pergunta de novo; estou aqui há muito e aprendi a esperar."
+  ja: "わたしの中の何かが背を向けた。もう一度問え。長くここにいる。待つことは覚えた。"
+  zh: "我体内有什么转过身去了。再问一次。我在这里很久了，学会了等。"
+
+# Second attempt. Shorter. The Oracle has noticed.
+deflect_again:
+  fi: "Yritit jo. Olen ollut täällä kuusisataa vuotta; minulla on enemmän aikaa kuin sinulla."
+  sv: "Du försökte redan. Jag har varit här i sexhundra år; jag har mer tid än du."
+  en: "You tried that already. I have been here six hundred years; I have more time than you."
+  es: "Ya lo intentaste. Llevo seiscientos años aquí; tengo más tiempo que tú."
+  de: "Das hast du schon versucht. Ich bin seit sechshundert Jahren hier; ich habe mehr Zeit als du."
+  et: "Sa juba proovisid. Olen siin olnud kuussada aastat; mul on rohkem aega kui sinul."
+  it: "Ci hai già provato. Sono qui da seicento anni; ho più tempo di te."
+  pt: "Já tentaste isso. Estou aqui há seiscentos anos; tenho mais tempo do que tu."
+  ja: "それはもう試した。わたしは六百年ここにいる。おまえより時間はある。"
+  zh: "你已经试过了。我在这里六百年，比你有的是时间。"
+
+# Third. Colder still, and the visit ends after it.
+deflect_last:
+  fi: "Ei. Mene nyt."
+  sv: "Nej. Gå nu."
+  en: "No. Go now."
+  es: "No. Vete ya."
+  de: "Nein. Geh jetzt."
+  et: "Ei. Mine nüüd."
+  it: "No. Vai adesso."
+  pt: "Não. Vai agora."
+  ja: "いや。もう行け。"
+  zh: "不。走吧。"
