@@ -9,3 +9,41 @@ sudo pkill -9 -f matrix_blink_test.py
 
 ip address pi 1: 192.168.60.2
 ip address pi 2: 192.168.60.3
+
+
+check ip address:
+check name of ethernet connection: nmcli connection show
+
+rename:
+sudo nmcli connection modify "Wired connection 1" \
+  ipv4.method manual \
+  ipv4.addresses 192.168.50.2/24 \
+  ipv4.gateway "" \
+  ipv4.dns "" \
+  connection.autoconnect yes
+
+apply:
+sudo nmcli connection down "Wired connection 1"
+sudo nmcli connection up "Wired connection 1"
+
+verify:
+ip -4 -br addr
+ip route
+
+
+configure laptop adapter:
+press windows and R
+
+ncpa.cpl
+
+change ip address in properties of adapter
+
+verify in computer powershell
+ping 192.168.50.2
+ping 192.168.60.3
+
+
+how to activate sensor:
+first run IDE 
+compile, upload, close window
+TD serial1 DAT Port: com5 needs to be activated after IDE ran

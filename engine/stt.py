@@ -31,6 +31,26 @@ from engine.config import load              # noqa: E402
 
 _model = None
 
+# Whisper, given a room instead of a voice, does not return nothing — it
+# returns a confident-looking sentence. The two shapes it produces are a very
+# low language score, and one token repeated: "is is is is is is is is". Both
+# reached the model on the first real run and got a thoughtful answer to
+# nothing at all, which is worse than silence, because the Oracle appears to
+# have misheard someone who never spoke.
+def _hallucinated(text: str) -> str:
+    words = [w.strip(".,!?;:—-").lower() for w in text.split()]
+    words = [w for w in words if w]
+    if len(words) >= 4 and len(set(words)) <= max(2, len(words) // 4):
+        return f"one word repeated ({words[0]!r} × {len(words)})"
+    # Whisper's other favourite: a caption from its training data.
+    stock = ("thank you for watching", "subtitles by", "amara.org",
+             "thanks for watching", "subscribe", "tekstitys")
+    low = text.lower()
+    for phrase in stock:
+        if phrase in low:
+            return f"a stock caption ({phrase!r})"
+    return ""
+
 
 # ── what a transcription is ───────────────────────────────────────────────
 @dataclass
@@ -45,9 +65,11 @@ class Transcript:
     switched: bool = False         # the policy changed the visit's language
     reason: str = ""               # why it did or did not
 
+    rejected: str = ""             # why it was thrown away, if it was
+
     @property
     def usable(self) -> bool:
-        return bool(self.text) and self.words > 0
+        return bool(self.text) and self.words > 0 and not self.rejected
 
 
 # ── the language policy ───────────────────────────────────────────────────
@@ -155,6 +177,26 @@ def unload() -> None:
     """Release the VRAM. Plan B, if TouchDesigner's scene needs it back."""
     global _model
     _model = None
+
+# Whisper, given a room instead of a voice, does not return nothing — it
+# returns a confident-looking sentence. The two shapes it produces are a very
+# low language score, and one token repeated: "is is is is is is is is". Both
+# reached the model on the first real run and got a thoughtful answer to
+# nothing at all, which is worse than silence, because the Oracle appears to
+# have misheard someone who never spoke.
+def _hallucinated(text: str) -> str:
+    words = [w.strip(".,!?;:—-").lower() for w in text.split()]
+    words = [w for w in words if w]
+    if len(words) >= 4 and len(set(words)) <= max(2, len(words) // 4):
+        return f"one word repeated ({words[0]!r} × {len(words)})"
+    # Whisper's other favourite: a caption from its training data.
+    stock = ("thank you for watching", "subtitles by", "amara.org",
+             "thanks for watching", "subscribe", "tekstitys")
+    low = text.lower()
+    for phrase in stock:
+        if phrase in low:
+            return f"a stock caption ({phrase!r})"
+    return ""
     import gc
     gc.collect()
 
@@ -190,9 +232,21 @@ def transcribe(audio, language_state: LanguageState | None = None, cfg=None) -> 
         language, switched, reason = language_state.decide(
             detected, confidence, words, speech_s)
 
+    # Confidence is a real setting that was being read and never applied to the
+    # transcript itself — only to which language to answer in.
+    rejected = ""
+    floor = float(cfg.get("stt.min_confidence", 0.5) or 0.5)
+    if confidence < floor:
+        rejected = f"confidence {confidence:.2f} below stt.min_confidence {floor}"
+    elif not text:
+        rejected = "nothing was said"
+    else:
+        rejected = _hallucinated(text)
+
     return Transcript(text=text, language=language, detected=detected,
                       confidence=confidence, words=words, speech_seconds=speech_s,
-                      elapsed=time.time() - t0, switched=switched, reason=reason)
+                      elapsed=time.time() - t0, switched=switched, reason=reason,
+                      rejected=rejected)
 
 
 # ── the acceptance test ───────────────────────────────────────────────────
@@ -250,10 +304,12 @@ def _read_file(path):
 
 
 def _report(t: Transcript) -> None:
-    mark = "→" if not t.switched else "⇒"
+    mark = "×" if t.rejected else ("→" if not t.switched else "⇒")
     print(f'  {mark} [{t.language}] "{t.text}"')
     print(f"      detected {t.detected} at {t.confidence:.2f}, {t.words} words, "
           f"{t.speech_seconds:.1f}s speech, {t.elapsed:.2f}s to transcribe")
+    if t.rejected:
+        print(f"      REJECTED: {t.rejected}")
     print(f"      {t.reason}\n")
 
 

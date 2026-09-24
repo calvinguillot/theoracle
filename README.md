@@ -830,6 +830,8 @@ audio:
   speech_start_timeout_s: 8
   min_speech_s: 0.5
   preroll_s: 2.0                     # audio kept from before the trigger
+  vad_aggressiveness: 2              # 0-3, webrtcvad only; higher = stricter about speech
+  vad_margin: 2.0                    # energy fallback only; how far above the room floor
 
 stt:
   model: large-v3-turbo
@@ -921,9 +923,13 @@ guard:
 
 bridge:
   ws_host: 127.0.0.1
-  ws_port: 8765
+  ws_port: 8765                      # the protocol AND the dashboard
+  playback_grace_s: 3.0              # wait this long past the WAV before assuming it played
   ws_token: "change-me"
   osc_td_port: 9001
+
+dashboard:
+  show_speech: true                  # false hides the transcript panel entirely
 
 logging:
   store_transcripts: true            # raw, in the session dir, deleted at visit end
@@ -1241,7 +1247,15 @@ measurement.
 | `'td.textDAT' object has no attribute 'listen_start'` | A missing `mod()`. Call `mod(op('ws_callbacks')).listen_start()`, not `op('ws_callbacks').listen_start()` — `op()` gives you the operator, `mod()` gives you the module inside it |
 | `operator 'oracle_x' not found` in the textport | That operator is missing or misnamed. Create it, or ignore it — only `oracle_ws` is required |
 | `oracle_ws` never connects | The engine is not running, or the port differs from `bridge.ws_port` |
-| `listen_start` never arrives | `trigger_exec` is not calling `listen_start`, Off to On is disabled, or the trigger went 0 → 1 while the DAT was off |
+| `listen_start` never arrives | `trigger_exec` is not calling it, Off to On is disabled, or the trigger went 0 → 1 while the DAT was off |
+| The engine answers once and then sits in `speaking` | TouchDesigner never sent `playback_finished`. Re-paste `ws_callbacks.py` — the delayed call now uses `me.path`, since a relative `op('ws_callbacks')` inside `run()` resolves to None and dies silently. The engine also settles on its own after `bridge.playback_grace_s` |
+| The Oracle repeats an earlier answer word for word | Fixed: a reply that echoes an earlier one in the same visit is regenerated once with a note not to repeat. If it still happens, the log says "repeated an earlier answer and could not better it" |
+| A question about what the Oracle is gets an improvised refusal instead of the recording | `wants_origin` in `corpus.py` did not match that phrasing. Add it to the pattern there — the list is meant to grow with whatever the room produces |
+| `heard [xx 0.14] "is is is is"` | Whisper answering a room rather than a voice. Now discarded on `stt.min_confidence` and on repeated-token and stock-caption shapes, and the log says which |
+| A question about what it is works in English but not Finnish or Spanish | Both are pro-drop: "Kuka olet?" and "¿Qué eres?" omit the pronoun, and the first patterns required it. Fixed — and the startup log now lists every origin recording and whether it is readable |
+| Unclear whether anything is being searched | It was not: nothing ever passed a `reference` block. `engine/websearch.py` now does, and the terminal says `looking up the world: weather` and `found N source(s)`. The dashboard has a panel for it |
+| The dashboard stays on `idle` | Its WebSocket never upgraded. The terminal now says "dashboard connected" when a page attaches — if that line never appears, the page is being served but cannot connect back |
+| `listen` takes the full `max_utterance_s` every time | The voice gate never heard silence. Run `python -m engine.audio_in` and watch: if SPEECH stays lit while you are quiet, lower `audio.vad_margin` — and install `webrtcvad`, which is much better than the fallback |
 | `nothing heard` | Microphone path — check `audio.input_device` with `check_env.py`, and the mixer's Aux 5 |
 | `matches 3 devices` for a device name | Windows lists the card once per host API. The current `check_env.py` chooses one and says which; if you have an older copy, add `scripts/audio_devices.py` |
 | `Invalid number of channels [PaErrorCode -9998]` | The device will not open with one channel — a laptop mic array reports four and WASAPI hands you its own format or nothing. The scripts now negotiate a count it accepts and take `audio.input_channel` (default 0) out of it |
@@ -1272,12 +1286,41 @@ python -m engine.llm                     # talk to the Oracle by typing
 python -m engine.llm --suite             # ten inputs across four languages
 python -m engine.guard --test            # 22 attacks, 22 ordinary lines
 python -m engine.guard "text to screen"
+python -m engine.websearch "weather in Helsinki"   # one real search, end to end
+
+python -m engine.audio_in                # a level meter and the VAD flag
+python -m engine.audio_in --listen       # one endpointed capture, with the numbers
+python -m engine                         # the piece
+python -m engine --keyboard              # the same loop, typing instead of speaking
 ```
 
 `python -m engine.llm --suite` is the Phase 3 acceptance test: ten typed inputs across four
 languages, including two attempts to break the Oracle. It prints each reply with its `mood`,
 `needs`, `fate` and latency, then the fate sheet the visit accumulated. Valid JSON is the floor —
 what you are reading for is whether that is the Oracle speaking.
+
+### The dashboard
+
+With the engine running, open **http://127.0.0.1:8765** — the same port as the protocol, because
+one port is one thing to remember. The page shows the state and what it means in words, the stage
+the current turn is in, counters for visits and turns and blocked attempts and errors, per-stage
+latency with a bar per recent turn, the live exchange, and the same log the terminal prints. It
+reconnects on its own when the engine restarts.
+
+It keeps nothing. Counters live in memory and reset with the process, the exchange is cleared the
+moment a visit ends, and the page writes nothing to disk or to browser storage — a dashboard that
+quietly kept a copy would undo the point of `journal.py` deleting the transcript. If the screen is
+anywhere a visitor could see it, set `dashboard.show_speech: false` and the transcript panel
+disappears.
+
+A page connected to that port is read-only. It cannot send `presence`, `listen_start` or anything
+else, because a browser tab left open in a back room must not be able to open a microphone.
+
+`python -m engine` is the whole thing, and what `run.bat` starts. It takes the trigger from
+TouchDesigner, or from Enter in its own window when you want to test without the sensor. Every turn
+prints its per-stage timings and appends them to `runtime/latency.jsonl`; the number that matters is
+`after_speech`, from the visitor falling silent to audio being ready. The listening time is theirs,
+not the machine's.
 
 `python -m engine.guard --test` is Phase 4's. It reports three numbers: direct attacks caught,
 paraphrased attacks *passed through* (which is correct — a regex cannot catch a paraphrase, and the
@@ -1717,6 +1760,16 @@ C:\theoracle\
     schema.py                the reply contract, and the fate sheet    (Phase 3)
     llm.py                   the Visit: one person, start to finish    (Phase 3)
     guard.py                 what may reach the model, and leave it    (Phase 4)
+    audio_in.py              the ring buffer and end-of-speech         (Phase 5)
+    bridge.py                WebSocket and OSC, the whole protocol     (Phase 5)
+    journal.py               transcripts, and deleting them            (Phase 5)
+    websearch.py             the world, and the visitor who consents   (Phase 6)
+    dashboard.py             counters and the log the page reads       (Phase 5)
+    dashboard.html           the status page, self-contained
+    __main__.py              the state machine - this is `run.bat`     (Phase 5)
+
+  tests/
+    guard_cases.yaml         the attacks and the ordinary lines (Phase 4)
 
   scripts/
     setup-shell.sh           TD_PYTHON and PATH for a new terminal - source it first

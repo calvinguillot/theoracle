@@ -1,4 +1,4 @@
-﻿# theoracle — TouchDesigner side of the bridge.
+# theoracle — TouchDesigner side of the bridge.
 #
 # Put this in a Text DAT named 'ws_callbacks' and set it as the WebSocket DAT's
 # callbacks DAT. See README Step 13.
@@ -17,6 +17,11 @@ import re
 
 # Absolute path to your repository's runtime/audio folder, forward slashes.
 AUDIO_DIR = 'C:/Users/user/Documents/Projects/theoracle/runtime/audio'
+
+# Leave empty unless you set bridge.ws_token in config.yaml to something other
+# than 'change-me'. If you do set one, it must match exactly, and this file is
+# then a secret: do not commit it with the token filled in.
+WS_TOKEN = ''
 
 AUDIO_ID_RE = re.compile(r'^[0-9a-f]{32}$')     # the engine's id format, nothing else
 STATES = ['idle', 'listening', 'transcribing', 'generating',
@@ -53,13 +58,61 @@ def send(event, **fields):
     ws.sendText(json.dumps(payload))
 
 
+def onConnect(dat):
+    """Say hello, so a token-protected engine will accept us.
+
+    Harmless when no token is set — the engine ignores an unexpected hello.
+    """
+    if WS_TOKEN:
+        send('hello', token=WS_TOKEN)
+    return
+
+
+def presence(here):
+    """The sensor's level, not an event.
+
+    The HC-SR04 tells you someone is *there*, continuously; it does not tell
+    you someone arrived. So both edges send the same message with a different
+    value. High opens a visit and keeps it going turn after turn without the
+    sensor firing again; low starts a departure clock, and the engine waits
+    conversation.end_on_sensor_clear_s before deciding they are really gone —
+    so a visitor who leans back to think does not lose their visit.
+    """
+    send('presence', present=bool(here))
+
+
 def listen_start():
-    """Call this from the sensor's CHOP Execute DAT."""
+    """One listening window. For testing without the sensor."""
     send('listen_start')
 
 
+def listen_stop():
+    """Stop recording now and process what was captured."""
+    send('listen_stop')
+
+
+def cancel():
+    """Abandon the visit. Anything still in flight is discarded, not played.
+
+    Wire this to the sensor's falling edge once the HC-SR04 is in: a visitor
+    who walks away should not be followed down the corridor by their own
+    prophecy.
+    """
+    send('cancel')
+
+
+def mute():
+    """The kill switch. Have a button for this before opening night."""
+    send('mute')
+
+
 def playback_finished():
-    """Called automatically when the audio should have finished."""
+    """Called automatically when the audio should have finished.
+
+    If you ever see the engine print "no playback_finished from
+    TouchDesigner", this is the call that did not happen — look in the
+    textport for an error from the delayed run() in play().
+    """
     send('playback_finished')
 
 
@@ -123,19 +176,36 @@ def play(msg):
 
     # Tell the engine when it is over. A delayed call rather than a Timer CHOP:
     # one less operator to wire, and the duration is already known.
+    #
+    # The absolute path matters. run() executes its string later, in whatever
+    # operator context happens to be current then, so a bare op('ws_callbacks')
+    # resolves to None and the delayed call dies silently in the textport —
+    # leaving the engine waiting in 'speaking' for ever. me.path is whatever
+    # this DAT is really called, wherever you put it.
     duration = float(msg.get('audio_duration_seconds', 0) or 0)
     if duration > 0:
-        run("mod(op('ws_callbacks')).playback_finished()",
-            delayMilliSeconds=int(duration * 1000) + 250)
+        run("mod(op('{}')).playback_finished()".format(me.path),
+            delayMilliSeconds=int(duration * 1000) + 250, delayRef=me)
 
 
 # ── the sensor ────────────────────────────────────────────────────────────
-# In the sensor's CHOP Execute DAT, with 'Off to On' enabled:
+# In the sensor's CHOP Execute DAT, with BOTH 'Off to On' and 'On to Off'
+# enabled:
 #
 #     def onOffToOn(channel, sampleIndex, val, prev):
-#         mod(op('ws_callbacks')).listen_start()
+#         mod(op('ws_callbacks')).presence(True)
 #         return
 #
-# For the first test, a Constant CHOP you set to 1 by hand is enough. The
-# HC-SR04 replaces it later: Serial DAT -> median filter -> threshold with
-# hysteresis -> this same call.
+#     def onOnToOff(channel, sampleIndex, val, prev):
+#         mod(op('ws_callbacks')).presence(False)
+#         return
+#
+# Both edges, one function, different value. Do NOT send cancel() on the
+# falling edge: cancel throws the visit away at once, and the sensor drops
+# every time somebody leans back or turns to a friend. The engine holds the
+# grace period for exactly that.
+#
+# For a first test, a Constant CHOP you set to 1 and back to 0 by hand behaves
+# the same as the sensor does. The HC-SR04 replaces it later: Serial DAT ->
+# median of 5 -> threshold with hysteresis (arm below 80 cm, disarm above
+# 120 cm) -> this same pair of calls.

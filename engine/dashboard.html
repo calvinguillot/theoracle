@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>theoracle</title>
+<style>
+  :root {
+    --bg:#0c0d10; --panel:#141519; --line:#22242b; --text:#e6e7ea;
+    --dim:#8b8f9a; --faint:#5a5e69;
+    --idle:#6b7280; --live:#4ade80; --work:#60a5fa; --warn:#fbbf24; --bad:#f87171;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.5 var(--mono); padding:16px; -webkit-font-smoothing:antialiased;
+  }
+  h1 { font-size:13px; letter-spacing:.18em; text-transform:uppercase;
+       color:var(--faint); margin:0 0 14px; font-weight:500; }
+  .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .panel h2 { font-size:10px; letter-spacing:.16em; text-transform:uppercase;
+              color:var(--faint); margin:0 0 10px; font-weight:500; }
+  .wide { grid-column:1/-1; }
+
+  /* the state, which is the whole point of the page */
+  .state { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .dot { width:11px; height:11px; border-radius:50%; background:var(--idle); flex:none;
+         align-self:center; }
+  .dot.on { animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .now { font-size:28px; letter-spacing:.02em; }
+  .sub { color:var(--dim); font-size:13px; }
+
+  .chain { display:flex; gap:4px; flex-wrap:wrap; margin-top:12px; }
+  .chain span { font-size:10px; padding:3px 7px; border-radius:4px;
+                background:#1b1d23; color:var(--faint); letter-spacing:.06em; }
+  .chain span.done { color:var(--dim); }
+  .chain span.at { background:var(--work); color:#08090c; }
+
+  .rows { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; }
+  .rows dt { color:var(--dim); }
+  .rows dd { margin:0; text-align:right; }
+
+  .counts { display:grid; grid-template-columns:repeat(auto-fit,minmax(78px,1fr)); gap:10px; }
+  .count b { display:block; font-size:24px; font-weight:500; line-height:1.15; }
+  .count span { font-size:10px; color:var(--faint); letter-spacing:.1em; text-transform:uppercase; }
+  .count.bad b { color:var(--bad); } .count.warn b { color:var(--warn); }
+
+  .bars { display:flex; align-items:flex-end; gap:2px; height:54px; margin-bottom:8px; }
+  .bars i { flex:1; background:var(--work); border-radius:1px 1px 0 0; min-height:2px; opacity:.85; }
+  .bars i.slow { background:var(--warn); } .bars i.bad { background:var(--bad); }
+
+  .said { margin:0 0 10px; }
+  .said .who { color:var(--faint); font-size:10px; letter-spacing:.12em;
+               text-transform:uppercase; margin-bottom:3px; }
+  .said .what { white-space:pre-wrap; word-break:break-word; }
+  .said .what.oracle { color:var(--live); }
+  .empty { color:var(--faint); font-style:italic; }
+
+  .log { max-height:300px; overflow-y:auto; font-size:12.5px; }
+  .log div { display:flex; gap:10px; padding:1px 0; }
+  .log time { color:var(--faint); flex:none; }
+  .log .m { word-break:break-word; }
+  .log .error .m { color:var(--bad); }
+  .log .warn  .m { color:var(--warn); }
+  .log .visit .m { color:var(--live); }
+  .log .heard .m { color:var(--work); }
+
+  .health { display:flex; flex-wrap:wrap; gap:6px; }
+  .pill { font-size:11px; padding:3px 9px; border-radius:99px;
+          background:#1b1d23; color:var(--dim); }
+  .pill.ok  { color:var(--live); } .pill.off { color:var(--bad); }
+
+  #offline { position:fixed; inset:auto 16px 16px auto; background:var(--bad);
+             color:#08090c; padding:7px 13px; border-radius:6px; font-size:12px; display:none; }
+</style>
+</head>
+<body>
+<h1>theoracle</h1>
+
+<div class="grid">
+  <div class="panel wide">
+    <div class="state">
+      <span class="dot" id="dot"></span>
+      <span class="now" id="now">connecting</span>
+      <span class="sub" id="doing"></span>
+    </div>
+    <div class="chain" id="chain"></div>
+  </div>
+
+  <div class="panel">
+    <h2>today</h2>
+    <div class="counts">
+      <div class="count"><b id="c-visits">0</b><span>visits</span></div>
+      <div class="count"><b id="c-turns">0</b><span>turns</span></div>
+      <div class="count warn"><b id="c-blocked">0</b><span>blocked</span></div>
+      <div class="count bad"><b id="c-errors">0</b><span>errors</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>this visit</h2>
+    <dl class="rows" id="visit"></dl>
+  </div>
+
+  <div class="panel">
+    <h2>silence to audio</h2>
+    <div class="bars" id="bars"></div>
+    <dl class="rows" id="timings"></dl>
+  </div>
+
+  <div class="panel wide" id="exchange-panel">
+    <h2>the exchange</h2>
+    <div id="exchange"><p class="empty">nothing yet</p></div>
+  </div>
+
+  <div class="panel wide">
+    <h2>health</h2>
+    <div class="health" id="health"></div>
+  </div>
+
+  <div class="panel wide">
+    <h2>log</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<div id="offline">engine unreachable — retrying</div>
+
+<script>
+const STATES = ['idle','listening','transcribing','generating','validating',
+                'synthesizing','ready','speaking','cooldown','error'];
+const DOING = {
+  idle:'waiting', listening:'someone is speaking', transcribing:'working out what was said',
+  generating:'the Oracle is thinking', validating:'checking what it wants to say',
+  synthesizing:'finding the voice', ready:'handing the audio to TouchDesigner',
+  speaking:'the Oracle is speaking', cooldown:'settling', error:'something went wrong'
+};
+const COLOUR = { idle:'--idle', speaking:'--live', error:'--bad', cooldown:'--warn' };
+
+const $ = id => document.getElementById(id);
+let exchange = { heard:null, said:null };
+
+function renderChain(state) {
+  const at = STATES.indexOf(state);
+  $('chain').innerHTML = STATES.slice(0, 9).map((s, i) =>
+    `<span class="${i === at ? 'at' : (at > i ? 'done' : '')}">${s}</span>`).join('');
+}
+
+function renderState(state) {
+  $('now').textContent = state;
+  $('doing').textContent = DOING[state] || '';
+  const busy = !['idle','error'].includes(state);
+  const dot = $('dot');
+  dot.style.background = `var(${COLOUR[state] || '--work'})`;
+  dot.classList.toggle('on', busy);
+  renderChain(state);
+}
+
+function renderStats(s) {
+  $('c-visits').textContent  = s.visits;
+  $('c-turns').textContent   = s.turns;
+  $('c-blocked').textContent = s.blocked + s.rejected;
+  $('c-errors').textContent  = s.errors;
+
+  const langs = Object.entries(s.languages || {})
+    .sort((a,b) => b[1]-a[1]).map(([k,v]) => `${k} ${v}`).join('  ') || '—';
+  const h = Math.floor(s.uptime/3600), m = Math.floor(s.uptime%3600/60);
+  $('visit').innerHTML = row('running', h ? `${h}h ${m}m` : `${m}m`)
+    + row('languages', langs)
+    + row('visit', s.session ? s.session.slice(0,8) : '—')
+    + row('turn', s.turn != null ? `${s.turn} of ${s.max_turns}` : '—')
+    + row('present', s.present ? 'yes' : 'no');
+
+  const lat = s.latencies || [];
+  const worst = Math.max(6, ...lat.map(x => x.after_speech));
+  $('bars').innerHTML = lat.slice(-40).map(x => {
+    const cls = x.after_speech > 8 ? 'bad' : x.after_speech > 5 ? 'slow' : '';
+    return `<i class="${cls}" style="height:${Math.max(3, x.after_speech/worst*100)}%"
+             title="${x.after_speech}s"></i>`;
+  }).join('');
+  const last = lat[lat.length-1];
+  $('timings').innerHTML = last
+    ? row('speech to text', last.stt + 's') + row('the Oracle', last.llm + 's')
+      + row('the voice', last.tts + 's')
+      + row('<b>total</b>', `<b>${last.after_speech}s</b>`)
+      + row('median of 10', (s.median_after_speech ?? '—') + 's')
+    : row('no turns yet', '');
+
+  $('health').innerHTML = Object.entries(s.health || {}).map(([k,v]) =>
+    `<span class="pill ${v === true ? 'ok' : v === false ? 'off' : ''}">${k}${
+      typeof v === 'string' ? ': ' + v : ''}</span>`).join('');
+
+  $('log').innerHTML = (s.log || []).slice().reverse().map(e =>
+    `<div class="${e.kind}"><time>${new Date(e.at*1000)
+      .toTimeString().slice(0,8)}</time><span class="m">${esc(e.line)}</span></div>`).join('');
+}
+
+function renderExchange() {
+  const el = $('exchange');
+  if (!exchange.heard && !exchange.said) {
+    el.innerHTML = '<p class="empty">nothing yet</p>';
+    return;
+  }
+  el.innerHTML =
+    (exchange.heard ? `<div class="said"><div class="who">heard</div>
+       <div class="what">${esc(exchange.heard)}</div></div>` : '') +
+    (exchange.said ? `<div class="said"><div class="who">the Oracle</div>
+       <div class="what oracle">${esc(exchange.said)}</div></div>` : '');
+}
+
+const row = (k,v) => `<dt>${k}</dt><dd>${v}</dd>`;
+const esc = t => String(t ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}`);
+  ws.onopen = () => {
+    $('offline').style.display = 'none';
+    ws.send(JSON.stringify({ protocol_version: 1, event: 'hello', role: 'monitor' }));
+  };
+  ws.onclose = () => { $('offline').style.display = 'block'; setTimeout(connect, 1500); };
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.event === 'state') renderState(m.state);
+    if (m.event === 'monitor') {
+      // Also from the snapshot, not only from state events: one missed
+      // broadcast should not leave the page showing 'idle' for ever.
+      if (m.state) renderState(m.state);
+      renderStats(m);
+      if (m.show_speech === false) $('exchange-panel').style.display = 'none';
+    }
+    // Held in this page only, and dropped the moment the visit ends.
+    if (m.event === 'transcript') { exchange = { heard: m.text, said: null }; renderExchange(); }
+    if (m.event === 'response_ready') { exchange.said = m.text || '[a recording]'; renderExchange(); }
+    if (m.event === 'visit_end') { exchange = { heard:null, said:null }; renderExchange(); }
+  };
+}
+renderState('idle');
+connect();
+</script>
+</body>
+</html>

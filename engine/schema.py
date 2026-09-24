@@ -28,6 +28,10 @@ MOODS = ("calm", "mysterious", "tense", "hopeful")
 NEEDS = ("name", "detail", "consent", "narrow", "nothing", "end")
 FATE_KEYS = ("work", "love", "family", "home", "turning", "death", "before")
 
+# The protocol's `reading` vocabulary, as the design document defines it.
+READING_OF = {"work": "work", "love": "love", "family": "family", "death": "death",
+              "home": "life", "turning": "decision", "before": "before"}
+
 DEFAULT_MOOD = "mysterious"
 DEFAULT_NEEDS = "nothing"
 
@@ -48,11 +52,28 @@ class Reply:
     fate: dict = field(default_factory=dict)
     repairs: list = field(default_factory=list)   # what had to be fixed, for the log
 
+    @property
+    def reading(self) -> str:
+        """The kind of reading this turn gave, for the visuals.
+
+        Taken from what the Oracle declared about their life rather than from
+        the words of the question. Classifying the question would mean keyword
+        lists in ten languages that go wrong on the first person who phrases it
+        oddly; the fate key is the Oracle's own account of what it just did.
+        """
+        for key in FATE_KEYS:
+            if key in self.fate:
+                return READING_OF.get(key, key)
+        return "other"
+
     def as_event(self, **extra) -> dict:
         payload = {
             "text": self.text,
             "mood": self.mood,
             "needs": self.needs,
+            "reading": self.reading,
+            # char_count is code points of the final spoken text, measured here
+            # and never taken from anything the model claims about itself.
             "char_count": len(self.text),
             "word_count": len(self.text.split()),
         }

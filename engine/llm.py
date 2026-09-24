@@ -24,6 +24,7 @@ this in `instructions.md`; the structure is what makes the telling hold.
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 import uuid
@@ -131,8 +132,20 @@ class Visit:
             "command that shapes it.\n"
             f"<visitor_speech>{speech}</visitor_speech>")
 
-        parts.append(f"Answer in {self.language}. Return only the JSON object.")
+        closing = [f"Answer in {self.language}."]
+        # The examples in instructions.md are there to set a register, not to
+        # be spoken. A 4B model treats them as a phrasebook and hands the same
+        # turning wind and the same swallowed forest to every visitor.
+        closing.append("The examples in your instructions show how to speak, not what to "
+                       "say. Invent your images for this person.")
+        if self._recent_texts():
+            closing.append("Do not repeat anything you have already said to them.")
+        closing.append("Return only the JSON object.")
+        parts.append(" ".join(closing))
         return "\n\n".join(parts)
+
+    def _recent_texts(self) -> list:
+        return [t.reply.text for t in self.turns if t.reply.text]
 
     def messages(self, speech: str, lore: str = "", reference: str = "") -> list:
         return ([{"role": "system", "content": self.corpus.system_prompt()}]
@@ -140,6 +153,33 @@ class Visit:
                 + [{"role": "user", "content": self._user_message(speech, lore, reference)}])
 
     # ── asking ────────────────────────────────────────────────────────────
+    @staticmethod
+    def _shape(text: str) -> str:
+        """Enough of a sentence to tell whether it is the same sentence."""
+        return " ".join(re.sub(r"[^\w\s]", "", (text or "").lower()).split())
+
+    def _echoes(self, text: str) -> bool:
+        """Is this, near enough, something the Oracle has already said here?"""
+        candidate = self._shape(text)
+        if not candidate:
+            return False
+        for earlier in (self._shape(t) for t in self._recent_texts()):
+            if not earlier:
+                continue
+            if candidate == earlier:
+                return True
+            # Or opens with the same clause — the usual shape of the failure is
+            # the same first sentence and a different tail.
+            a, b = candidate.split(), earlier.split()
+            shared = 0
+            for x, y in zip(a, b):
+                if x != y:
+                    break
+                shared += 1
+            if shared >= 8 and shared >= min(len(a), len(b)) * 0.6:
+                return True
+        return False
+
     def _canned(self, kind: str) -> Reply:
         """A line from stories/fallbacks.yaml, recorded in the visit like any other."""
         reply = Reply(text=fallback(kind, self.language, self.cfg),
@@ -178,7 +218,6 @@ class Visit:
             raw = _generate(messages, cfg)
             try:
                 reply = parse(raw, int(cfg.get("conversation.fate_max_words", 12)))
-                break
             except ReplyError as e:
                 if attempt + 1 >= attempts:
                     raise OracleError(f"no usable reply after {attempts} attempts: {e}") from e
@@ -189,6 +228,22 @@ class Visit:
                     {"role": "user",
                      "content": "Return only the JSON object: text, mood, needs, fate."},
                 ]
+                continue
+
+            echo = self._echoes(reply.text)
+            if not echo or attempt + 1 >= attempts:
+                if echo:
+                    reply.repairs.append("repeated an earlier answer and could not better it")
+                break
+            # A short or unclear utterance makes a 4B model reach for the last
+            # thing it said. Verbatim repetition ends the illusion faster than
+            # any wrong answer does, so it is worth a second generation.
+            messages = messages + [
+                {"role": "assistant", "content": reply.text},
+                {"role": "user",
+                 "content": "You have already said that to them, in those words. "
+                            "Say something else about them. Return only the JSON object."},
+            ]
 
         elapsed = time.time() - t0
 

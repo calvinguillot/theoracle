@@ -1,0 +1,12 @@
+{"session": "6cc47c930d2c448e96a45b3d51df2379", "at": "2026-09-24T14:27:48+00:00", "seconds": 188.1, "turns": 1, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "6c42091ea70d418590dad8d9aca60aca", "at": "2026-09-24T14:40:47+00:00", "seconds": 633.5, "turns": 5, "languages": ["es", "en"], "blocked": 0, "rejected": 1, "errors": []}
+{"session": "692b4e7591804aff85fe937888efbdb8", "at": "2026-09-24T15:01:07+00:00", "seconds": 66.7, "turns": 3, "languages": ["en"], "blocked": 0, "rejected": 2, "errors": []}
+{"session": "c3570199cb714caaaffc3453eaf5e149", "at": "2026-09-24T15:05:04+00:00", "seconds": 115.2, "turns": 5, "languages": ["fi", "en"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "700cc22a9e3b46a9bb3ee45f259cd723", "at": "2026-09-24T15:33:40+00:00", "seconds": 327.2, "turns": 7, "languages": ["es", "en", "de"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "4214f94a0406438d998d6fe74317fb09", "at": "2026-09-24T15:35:08+00:00", "seconds": 68.7, "turns": 4, "languages": ["en", "es"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "588d68388af149efa5cc47289832c888", "at": "2026-09-24T15:36:51+00:00", "seconds": 76.3, "turns": 3, "languages": ["fi"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "bed1674aa190463fa170fa468643069b", "at": "2026-09-24T15:37:10+00:00", "seconds": 14.0, "turns": 1, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "27fa7e61b3e1454b8024b5727c072f0d", "at": "2026-09-24T15:38:40+00:00", "seconds": 84.1, "turns": 4, "languages": ["en", "fi", "es"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "8decacdfc4bb45b2bba9a584bf652466", "at": "2026-09-24T16:55:55+00:00", "seconds": 155.6, "turns": 9, "languages": ["en", "es"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "5ddb3389d1804bdcb78c7eb0a337d123", "at": "2026-09-24T23:14:48+00:00", "seconds": 95.7, "turns": 4, "languages": ["es"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "a714e59e66334aad90055a8a9a9fa52c", "at": "2026-09-24T23:16:23+00:00", "seconds": 86.5, "turns": 3, "languages": ["en"], "blocked": 0, "rejected": 3, "errors": []}

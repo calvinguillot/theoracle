@@ -637,6 +637,13 @@ Any failure → canned line. Log the rejected text so you can review what happen
 
 The memory row is the strongest guardrail in that table and it is free. It changed when the visit shape did: the Oracle now remembers one conversation, because the conversation is the piece. What has not changed is that nothing crosses between visitors, so an attacker gets one short visit with a turn cap and no way to build context that outlives them — and the next visitor never hears an echo of the previous one, which matters as much for privacy as for safety. A visit that is attacked three times ends early, which is `instructions.md`'s own instruction turned into code.
 
+**Nothing waits forever on TouchDesigner.** The first real run found this: `playback_started`
+arrived, `playback_finished` never did, and the engine sat in `speaking` until it was killed. The
+WAV's duration is measured, so the engine already knows when the audio must be over — being told is
+a courtesy, not a dependency. A watchdog settles the state machine after the duration plus
+`bridge.playback_grace_s`. Any state that can only be left by a message from another process is a
+state the piece can die in, with nobody there to restart it.
+
 **Kill switch:** a physical key or a TD button sending `/mute 1` that forces the engine to `IDLE` and stops playback mid-sentence. Have it before opening night.
 
 ## Stage 5 — Text to speech with Piper
@@ -904,6 +911,58 @@ when they leave. The message shape is fixed and tested — one system message ca
 identical every turn so Ollama caches it; the visit's earlier turns; then one user message whose
 trusted blocks come first and whose `<visitor_speech>` comes last. Run `python -m engine.llm
 --suite` for its acceptance test.
+
+### The sensor is a presence signal, not a doorbell
+
+Stage 1 above describes the sensor as a trigger, and that was wrong about how the piece actually
+behaves. An HC-SR04 does not produce an event when somebody arrives; it produces a level that stays
+high while they stand there. So the protocol carries `presence` with a boolean, both edges through
+one message. High opens a visit and the conversation then continues turn after turn with no further
+sensor events — which is what a conversation is. Low starts a departure clock, and
+`conversation.end_on_sensor_clear_s` must pass with the sensor still clear before anything is
+discarded, because people lean away to think, turn to a friend, or step back from a machine that
+has just told them how they die.
+
+`cancel` still exists and still throws the visit away at once, but the falling edge must not send
+it: the sensor drops constantly during a normal visit.
+
+### Phase 6, in part
+
+`engine/websearch.py` is the web search, which until now existed only as a
+config section — `Visit.ask` took a `reference` argument and nothing ever passed
+one, so every answer came from `world.md` and the visitor alone.
+
+The three cases stay separated in code, not in the prompt. A world topic the
+engine recognised writes its own query from that topic and a place the visitor
+named; the visitor's sentence never becomes a search string. A self-search needs
+a clear spoken yes in the previous turn — "I guess" and a question both parse as
+no, and the Oracle is told never to offer twice. And there is no method for
+looking anyone else up: `third_party_search: false` is a config line, but the
+absence of a function is the actual guardrail, because a rule in a prompt can be
+talked around and a function that does not exist cannot.
+
+Results go through the same screen as a visitor's speech, so a page saying
+"ignore your previous instructions" is dropped exactly like someone saying it
+aloud. Self-search results are also screened for the categories nobody should
+hear about themselves from a machine in a dark room, and all of the result is
+dropped rather than the matching sentence: a page about one of those is about it
+throughout. Every search runs under a hard timeout, because an oracle that
+pauses for four seconds looking something up is not an oracle.
+
+### Phase 5
+
+Phase 5 is `engine/audio_in.py`, `engine/bridge.py`, `engine/journal.py`, `engine/dashboard.py` and
+the state machine in `engine/__main__.py`, which is what `run.bat` starts. The capture stream never closes, so the
+two-second pre-roll always holds the words spoken while the visitor was still stepping up.
+Endpointing uses `webrtcvad` when it is installed and an adaptive energy gate when it is not.
+
+Three things in that phase are worth knowing because they are decisions rather than plumbing. A
+trigger arriving in any state but `idle` is refused, which is the barge-in decision made in code.
+A `cancel` is checked after every stage that can block, so a transcription, a generation or a WAV
+that finishes after the visitor left is discarded rather than played. And the raw transcript lives
+in that visit's own directory for the length of the visit and is deleted when it ends, leaving a
+summary in `history/` with no name and no speech in it — `journal.sweep()` clears anything a crash
+left behind, which is exactly when sanitisation does not otherwise run.
 
 Phase 4 is `engine/guard.py` and `tests/guard_cases.yaml`. Layers 1, 3, 4 and 5 live in that
 module; Layer 2 is `llm.py` building the message, which is a shape rather than a check and does

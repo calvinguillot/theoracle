@@ -185,6 +185,35 @@ def has_origin(language: str, cfg=None) -> bool:
     return any((folder / f).exists() for f in origin_choices(language, cfg))
 
 
+def origin_report(cfg=None) -> dict:
+    """Which languages actually have a playable recording, and why not.
+
+    Called at startup and shown on the dashboard. "It worked in English" is not
+    a useful bug report and should not have to be one: every language the
+    config names a recording for is either present and readable here, or says
+    what is wrong with it.
+    """
+    cfg = cfg or load()
+    folder = cfg.path_to("prerendered.dir", "voices/prerendered")
+    from engine import wav_io
+
+    report = {}
+    for lang in (cfg.get("prerendered.origin", {}) or {}):
+        states = []
+        for name in origin_choices(lang, cfg):
+            path = folder / name
+            if not path.exists():
+                states.append(f"{name}: missing")
+                continue
+            try:
+                m = wav_io.probe(path)
+                states.append(f"{name}: {m['seconds']:.0f}s ok")
+            except Exception as e:
+                states.append(f"{name}: unreadable ({e})")
+        report[lang] = states
+    return report
+
+
 def origin(language: str, session_id: str = "", cfg=None) -> Speech | None:
     """The recorded narration for this language, staged for playback.
 
@@ -194,8 +223,12 @@ def origin(language: str, session_id: str = "", cfg=None) -> Speech | None:
     """
     cfg = cfg or load()
     folder = cfg.path_to("prerendered.dir", "voices/prerendered")
-    available = [folder / f for f in origin_choices(language, cfg) if (folder / f).exists()]
+    wanted = origin_choices(language, cfg)
+    available = [folder / f for f in wanted if (folder / f).exists()]
     if not available:
+        if wanted:
+            print(f"  origin: config names {wanted} for '{language}' but none is in {folder}",
+                  file=sys.stderr)
         return None
 
     # Seeded on the session: one voice per visit, a different one next time.
@@ -203,7 +236,15 @@ def origin(language: str, session_id: str = "", cfg=None) -> Speech | None:
     source = random.Random(seed).choice(available)
 
     from engine import wav_io
-    meta = wav_io.probe(source)
+    try:
+        meta = wav_io.probe(source)
+    except Exception as e:
+        # A file that exists but cannot be read is the worse failure: the
+        # engine would fall through to live generation and nobody would know
+        # the recording was never going to play.
+        print(f"  origin: {source.name} exists but cannot be read ({e}) — "
+              f"run: python -m engine.wav_io --convert voices/prerendered", file=sys.stderr)
+        return None
 
     t0 = time.time()
     out = output_dir(cfg)
