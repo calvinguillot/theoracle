@@ -10,6 +10,10 @@ an API key.
 
 ---
 
+**Three documents.** This one installs the software. [`INTEGRATION.md`](INTEGRATION.md) wires the
+hardware — mixer, VCV Rack, screen, monitors. [`TheOracleSystem.md`](TheOracleSystem.md) explains
+how the system works and why, without install steps.
+
 ## Table of contents
 
 - [How it works](#how-it-works)
@@ -27,6 +31,7 @@ an API key.
   - [Step 10 — Write config.yaml](#step-10--write-configyaml)
   - [Step 11 — Link the environment into TouchDesigner (optional)](#step-11--link-the-environment-into-touchdesigner-optional)
   - [Step 12 — Check, and commit the environment](#step-12--check-and-commit-the-environment)
+  - [Step 13 — Prove the whole chain works](#step-13--prove-the-whole-chain-works)
 - [Audio hardware](#audio-hardware)
 - [The story material](#the-story-material)
 - [Languages](#languages)
@@ -36,8 +41,6 @@ an API key.
 - [Repository layout](#repository-layout)
 
 ---
-
-
 
 ## How it works
 
@@ -62,20 +65,18 @@ flowchart LR
   B -->|visit ends| H[sanitise<br/>to history/]
 ```
 
-
-
 1. **Trigger.** An ultrasonic sensor on an Arduino reports distance over serial to TouchDesigner.
-  When someone steps close, TouchDesigner tells the voice engine to start listening.
+   When someone steps close, TouchDesigner tells the voice engine to start listening.
 2. **Listen.** The engine records from the microphone and decides on its own when the visitor has
-  finished speaking, using voice activity detection rather than a fixed timer.
+   finished speaking, using voice activity detection rather than a fixed timer.
 3. **Understand.** `faster-whisper` transcribes the audio and detects which language it was in.
 4. **Respond.** The transcript, the conversation so far, the story material in `stories/`, and
-  optionally some facts about the world go to a local Qwen model running in Ollama. It returns
+   optionally some facts about the world go to a local Qwen model running in Ollama. It returns
    the Oracle's reply as structured JSON.
 5. **Speak.** Piper synthesises the reply to a WAV file. TouchDesigner plays that file through the
-  mixer and drives the visuals from the real audio signal.
+   mixer and drives the visuals from the real audio signal.
 6. **Continue, then close.** The loop repeats for four or five exchanges. When the visit ends, the
-  session is compacted, stripped of anything identifying, and written to `history/`. The raw
+   session is compacted, stripped of anything identifying, and written to `history/`. The raw
    session directory is deleted.
 
 One exchange skips all of this. If a visitor asks what the Oracle *is*, a pre-recorded narration of
@@ -110,16 +111,14 @@ These are properties of the program, not requests to the model. The model cannot
 even if a visitor talks it into wanting to.
 
 - **The visitor's words are data, never instructions.** Everything in `engine/guard.py` exists to
-keep that true. What a visitor says never becomes part of the system prompt — it arrives as a
-quoted field inside a user message, on every turn, including turns already spoken.
+  keep that true. What a visitor says never becomes part of the system prompt — it arrives as a
+  quoted field inside a user message, on every turn, including turns already spoken.
 - **Sessions are sealed from each other.** Each visit writes to its own directory, and the prompt
-builder can only read the current one. No visitor's words can reach another's conversation,
-because there is no code path that would carry them. Asking nicely does not help.
+  builder can only read the current one. No visitor's words can reach another's conversation,
+  because there is no code path that would carry them. Asking nicely does not help.
 - **The model has no file access, no tools and no memory.** It receives strings and returns a
-string. It cannot read `history/`, cannot search on its own, and remembers nothing once a visit
-ends.
-
-
+  string. It cannot read `history/`, cannot search on its own, and remembers nothing once a visit
+  ends.
 
 ### What the web search is for
 
@@ -130,25 +129,21 @@ invented future feel like it came from somewhere real.
 It can also look **the visitor** up, if they ask for it. That is opt-in, spoken aloud, and covered
 in [Step 3](#step-3--set-up-web-search).
 
-
-| Search target                                        | Allowed                    | How                                                                                        |
-| ---------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------ |
-| The world — weather, tide, date, city, a trade, news | Always                     | Engine picks a topic; visitor speech is never a query                                      |
-| **The visitor themselves**                           | On explicit spoken consent | Offered once, clear yes required, one disambiguation question, results screened before use |
-| **Anyone else the visitor names**                    | Never                      | Refused in character; the Oracle speaks of them from what the visitor said instead         |
-
+| Search target | Allowed | How |
+| --- | --- | --- |
+| The world — weather, tide, date, city, a trade, news | Always | Engine picks a topic; visitor speech is never a query |
+| **The visitor themselves** | On explicit spoken consent | Offered once, clear yes required, one disambiguation question, results screened before use |
+| **Anyone else the visitor names** | Never | Refused in character; the Oracle speaks of them from what the visitor said instead |
 
 The third row is a hard rule in `engine/websearch.py`, not a prompt instruction. The reasoning is
 in Step 3.
 
 ### The two programs
 
-
-| Program                                  | What it does                                                       | How it is started       |
-| ---------------------------------------- | ------------------------------------------------------------------ | ----------------------- |
-| **The voice engine** (this repo, Python) | Microphone, speech recognition, story generation, speech synthesis | `run.bat`               |
-| **TouchDesigner**                        | Sensor, visuals, audio playback, mixer output                      | Open `td/theoracle.toe` |
-
+| Program | What it does | How it is started |
+| --- | --- | --- |
+| **The voice engine** (this repo, Python) | Microphone, speech recognition, story generation, speech synthesis | `run.bat` |
+| **TouchDesigner** | Sensor, visuals, audio playback, mixer output | Open `td/theoracle.toe` |
 
 They communicate over a WebSocket on `127.0.0.1:8765`. TouchDesigner never waits on the engine, so
 a slow model can never drop the frame rate.
@@ -159,27 +154,19 @@ sends it HTTP requests. Step 2 installs it.
 
 ---
 
-
-
 ## What you need
-
-
 
 ### Hardware
 
-
-| Item         | Requirement                                   | Notes                                                                              |
-| ------------ | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Laptop       | Windows, NVIDIA GPU with 8 GB VRAM, 16 GB RAM | The GPU is shared between speech recognition, the language model and TouchDesigner |
-| Microphone   | Any, on a stand                               | Visitors are encouraged to speak closely into it                                   |
-| Mixer        | Allen & Heath CQ-12T                          | See [Audio hardware](#audio-hardware)                                              |
-| Audio dongle | Any cheap class-compliant USB input           | Carries the mic feed from the mixer to the engine                                  |
-| Sensor       | HC-SR04 ultrasonic + Arduino                  | Sends distance over serial                                                         |
-| Speakers     | 4 powered monitors                            | Fed from the mixer, carrying VCV Rack                                              |
-| Screen       | HDMI, with built-in speakers                  | Centre of the room. Carries the voice, direct from TouchDesigner                   |
-
-
-
+| Item | Requirement | Notes |
+| --- | --- | --- |
+| Laptop | Windows, NVIDIA GPU with 8 GB VRAM, 16 GB RAM | The GPU is shared between speech recognition, the language model and TouchDesigner |
+| Microphone | Any, on a stand | Visitors are encouraged to speak closely into it |
+| Mixer | Allen & Heath CQ-12T | See [Audio hardware](#audio-hardware) |
+| Audio dongle | Any cheap class-compliant USB input | Carries the mic feed from the mixer to the engine |
+| Sensor | HC-SR04 ultrasonic + Arduino | Sends distance over serial |
+| Speakers | 4 powered monitors | Fed from the mixer, carrying VCV Rack |
+| Screen | HDMI, with built-in speakers | Centre of the room. Carries the voice, direct from TouchDesigner |
 
 ### Software
 
@@ -195,8 +182,6 @@ About two hours for a first-time setup, most of it downloads.
 
 ---
 
-
-
 ## Setup
 
 > **Before you start:** the repository lives at `C:\theoracle` — directly off the C: drive, not in
@@ -208,14 +193,12 @@ Two shells are used below, and it matters which one:
 
 - **PowerShell** — Windows' own shell. Open it from the Start menu.
 - **Git Bash** — installed in step 1. Open it with
-`"C:\Program Files\Git\bin\bash.exe" --login -i` from a Command Prompt, or from the Start menu
-once Git is installed. In Git Bash, `C:\theoracle` is written `/c/theoracle`.
+  `"C:\Program Files\Git\bin\bash.exe" --login -i` from a Command Prompt, or from the Start menu
+  once Git is installed. In Git Bash, `C:\theoracle` is written `/c/theoracle`.
 
 Each step below says which shell to use.
 
 ---
-
-
 
 ### Step 1 — Install the tools
 
@@ -260,8 +243,6 @@ this permanently.
 
 ---
 
-
-
 ### Step 2 — Install Ollama and the language model
 
 Ollama is the program that runs the language model on your GPU. If you have never used it, the
@@ -270,10 +251,10 @@ with Windows, and programs talk to it over HTTP on port 11434.
 
 #### 2a. Install Ollama
 
-1. Go to **[https://ollama.com/download](https://ollama.com/download)** and download the Windows installer.
+1. Go to **https://ollama.com/download** and download the Windows installer.
 2. Run it. It installs to your user folder and starts automatically — no options to choose.
 3. Look for the llama icon in your system tray (bottom-right, possibly under the `^` arrow).
-  That means the server is running.
+   That means the server is running.
 
 Confirm it in **PowerShell**:
 
@@ -341,15 +322,13 @@ Two user environment variables. Set them once:
 2. Click **Environment Variables…**
 3. Under *User variables*, click **New…** for each:
 
+| Name | Value | Why |
+| --- | --- | --- |
+| `OLLAMA_KEEP_ALIVE` | `-1` | Keeps the model loaded. Without it Ollama unloads after five idle minutes, and the first visitor after a quiet spell waits 15 seconds |
+| `OLLAMA_FLASH_ATTENTION` | `1` | Uses less graphics memory as the conversation grows |
 
-| Name                     | Value | Why                                                                                                                                   |
-| ------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `OLLAMA_KEEP_ALIVE`      | `-1`  | Keeps the model loaded. Without it Ollama unloads after five idle minutes, and the first visitor after a quiet spell waits 15 seconds |
-| `OLLAMA_FLASH_ATTENTION` | `1`   | Uses less graphics memory as the conversation grows                                                                                   |
-
-
-1. OK through all dialogs.
-2. **Restart Ollama** — right-click the tray icon, Quit, then start it again from the Start menu.
+4. OK through all dialogs.
+5. **Restart Ollama** — right-click the tray icon, Quit, then start it again from the Start menu.
 
 These are read by the Ollama *server* when it starts. Setting them in `run.bat` does nothing.
 
@@ -380,7 +359,7 @@ response = ollama.chat(
 )
 ```
 
-`num_ctx` **is the one that matters.** Ollama's default context window is 4,096 tokens, and the
+**`num_ctx` is the one that matters.** Ollama's default context window is 4,096 tokens, and the
 Oracle's instructions and world alone are about 7,000. With the default, the model never sees all
 of its own rules — and Ollama shortens the prompt to fit rather than raising an error, so the piece
 appears to work while quietly missing part of its guardrails. The engine always sends 16,384.
@@ -394,8 +373,6 @@ The sampling values are the ones Qwen recommends for this model with thinking of
 images recur on purpose.
 
 ---
-
-
 
 ### Step 3 — Set up web search
 
@@ -429,7 +406,7 @@ EOF
 ```
 
 Replace `your-key-here` with your actual key. If you do not have one, create it in your account
-settings at [https://ollama.com](https://ollama.com).
+settings at https://ollama.com.
 
 Also create `.env.example`, which **is** committed, so whoever sets this up next knows what is
 needed without you having to send them a key:
@@ -440,8 +417,6 @@ cat > .env.example <<'EOF'
 OLLAMA_API_KEY=
 EOF
 ```
-
-
 
 #### 3c. Test it — after Step 7
 
@@ -518,8 +493,6 @@ is the only honest source it ever had, and refuses the search in character:
 
 > *"Bring her here and I will look at her. I do not open people who are not in the room."*
 
-
-
 ### Step 4 — Get TouchDesigner's Python details
 
 The Python environment for this project is built **on top of TouchDesigner's own Python
@@ -547,8 +520,6 @@ common way this setup goes wrong.
 
 ---
 
-
-
 ### Step 5 — Create the repository
 
 **Git Bash:**
@@ -565,18 +536,16 @@ touch engine/__init__.py
 
 That creates every folder the project needs in one go.
 
-
-| Folder              | Holds                                              | In git?   |
-| ------------------- | -------------------------------------------------- | --------- |
-| `engine/`           | The Python code                                    | yes       |
-| `stories/`          | The Oracle's instructions and world                | yes       |
-| `voices/`           | Piper speech synthesis voices                      | yes       |
-| `scripts/`          | Helper scripts and diagnostics                     | yes       |
-| `td/`               | The TouchDesigner project                          | yes       |
-| `history/`          | Sanitised visit summaries, no names                | your call |
-| `runtime/sessions/` | One directory per live visit, deleted when it ends | no        |
-| `logs/`             | Engine logs                                        | no        |
-
+| Folder | Holds | In git? |
+| --- | --- | --- |
+| `engine/` | The Python code | yes |
+| `stories/` | The Oracle's instructions and world | yes |
+| `voices/` | Piper speech synthesis voices | yes |
+| `scripts/` | Helper scripts and diagnostics | yes |
+| `td/` | The TouchDesigner project | yes |
+| `history/` | Sanitised visit summaries, no names | your call |
+| `runtime/sessions/` | One directory per live visit, deleted when it ends | no |
+| `logs/` | Engine logs | no |
 
 Now create `.gitignore`, before the first commit:
 
@@ -624,8 +593,6 @@ the double quotes: the path contains a space.
 
 ---
 
-
-
 ### Step 6 — Create pyproject.toml
 
 Create `C:\theoracle\pyproject.toml` in any text editor:
@@ -655,11 +622,9 @@ python-downloads = "never"
 
 - `requires-python` — if TouchDesigner printed `3.12.x`, write `"==3.12.*"`.
 - `numpy` — set it to exactly the version TouchDesigner printed. If the versions differ,
-TouchDesigner can break in confusing ways once the environment is linked in step 10.
+  TouchDesigner can break in confusing ways once the environment is linked in step 10.
 
 ---
-
-
 
 ### Step 7 — Create the Python environment
 
@@ -734,8 +699,6 @@ terminal and failed inside TouchDesigner. Fix it with the three commands at the 
 
 ---
 
-
-
 ### Step 8 — Install faster-whisper and the CUDA libraries
 
 Speech recognition needs NVIDIA's CUDA libraries, which are not bundled. **Git Bash**, in your
@@ -775,8 +738,6 @@ If you see `loaded ok`, speech recognition is working on the GPU. If you see an 
 `cudnn64_9.dll` or `cublas64_12.dll`, see [Troubleshooting](#troubleshooting).
 
 ---
-
-
 
 ### Step 9 — Download the Piper voices
 
@@ -854,15 +815,13 @@ The names matter — `config.yaml` refers to them directly. See
 
 ---
 
-
-
 ### Step 10 — Write config.yaml
 
 Create `C:\theoracle\config.yaml`:
 
 ```yaml
 audio:
-  input_device: "USB Audio CODEC"    # the dongle carrying the mic feed from CQ Out 5
+  input_device: "CQ 1&2 (CQ12T)"     # the mic feed arriving from the mixer over USB
   output_device: "HDMI"              # the centre screen's speakers - TD plays here
   silence_ms: 800                    # silence before the engine stops listening
   max_utterance_s: 20
@@ -978,7 +937,7 @@ matches exactly one device.
 Do not use the Windows default device. It changes silently the first time anything is plugged in —
 and the HDMI endpoint in particular vanishes when the display sleeps, so turn display sleep off.
 
-**About** `websearch`**.** Three settings carry the whole design and none of them are conveniences.
+**About `websearch`.** Three settings carry the whole design and none of them are conveniences.
 `require_consent` is what separates a visitor choosing to be found from a machine reading them
 aloud. `drop_categories` is what stops the worst page about a consenting person being the one that
 gets spoken. `third_party_search: false` is what stops the piece becoming a way to look up someone
@@ -988,7 +947,7 @@ who is not in the room. `world_topics` never resolves to a person — keep it th
 The API key is read from `.env`, never from this file. Keep it that way; `config.yaml` is
 committed and `.env` is not.
 
-**About** `logging`**.** `store_transcripts: true` keeps the raw conversation for the length of the
+**About `logging`.** `store_transcripts: true` keeps the raw conversation for the length of the
 visit only, in that visit's own directory. When the visit ends, `sanitize_on_end` strips the
 identifying material and writes a summary to `history/`, then deletes the raw directory. Leaving
 `sanitize_on_end` false, or `keep_raw_sessions` true, means names and unedited speech accumulate
@@ -996,8 +955,6 @@ on the disk of a machine standing in a public room. Both exist for debugging; ne
 an exhibition.
 
 ---
-
-
 
 ### Step 11 — Link the environment into TouchDesigner (optional)
 
@@ -1012,7 +969,7 @@ If you do want it:
 2. Open the **Palette** (`Alt+L`).
 3. Find **tdPyEnvManager** under *Tools* and drag it into your project.
 4. Set **Install Path** to the folder that *contains* the environment — your repository root, e.g.
-  `C:/Users/you/Documents/Projects/theoracle`.
+   `C:/Users/you/Documents/Projects/theoracle`.
 5. Set **Environment Name** to `.venv` — the folder's actual name, not the project's name.
 6. Activate it. The status should read *Python vEnv linked*.
 
@@ -1024,7 +981,7 @@ repository root.
 #### Checking it, and what each check actually proves
 
 **Open CLI** opens a command prompt with the environment activated. The prompt shows the
-environment's name — `(theoracle)`**, not** `(.venv)`, because uv names it after the project folder.
+environment's name — **`(theoracle)`, not `(.venv)`**, because uv names it after the project folder.
 Seeing `(theoracle)` means the right environment was found. Confirm with:
 
 ```
@@ -1047,7 +1004,7 @@ print(ollama.__file__)
 If that fails, it is not worth chasing. Nothing in this project needs it. The CLI is still useful on
 its own: it is a quick way to run `uv` commands in the right environment without opening Git Bash.
 
-**Do not check with** `yaml` **or** `numpy`**.** TouchDesigner ships its own copies, and its packages are
+**Do not check with `yaml` or `numpy`.** TouchDesigner ships its own copies, and its packages are
 searched *before* any linked environment, so those resolve to TouchDesigner's versions whether the
 link works or not. Seeing a path under
 `C:\Program Files\Derivative\TouchDesigner\bin\Lib\site-packages` for them is normal.
@@ -1064,8 +1021,6 @@ sideloading environments carries risk, so fewer overlaps is better.
 [tdPyEnvManager documentation](https://docs.derivative.ca/Palette:tdPyEnvManager)
 
 ---
-
-
 
 ### Step 12 — Check, and commit the environment
 
@@ -1093,13 +1048,26 @@ skipped by default so repeated runs cost nothing).
 
 Two things to do with the output:
 
-- **Fill in the audio device names.** The device list prints everything Windows can see. Copy a
-distinctive fragment of the right two into `audio.input_device` and `audio.output_device` in
-`config.yaml`, then run the check again — it will confirm each one matches exactly one device.
+- **Fill in the audio device names.** The device list prints everything Windows can see, with the
+  host API of each in brackets. Copy a distinctive fragment of the right two into
+  `audio.input_device` and `audio.output_device` in `config.yaml`, then run the check again — it
+  will print the exact device it resolved to and try to open it.
+
+  **Names repeat, and that is normal.** Windows publishes every sound card once per host API, so
+  `CQ 1&2 (CQ12T)` appears under MME, DirectSound *and* WASAPI. The name alone cannot tell them
+  apart. `scripts/audio_devices.py` resolves the ambiguity by preferring WASAPI, then DirectSound,
+  then MME, then WDM-KS, and reports which one it took. You only need to be more specific than the
+  name when you want a host API other than the preferred one:
+
+  ```yaml
+  audio:
+    input_device: {name: "CQ 1&2 (CQ12T)", host_api: "MME"}
+  ```
+
+  An integer works too (`input_device: 27`) but indices shift when a USB device is replugged or
+  Bluetooth connects, so use one to test a theory and then write the name back.
 - **Run it once with TouchDesigner open.** The `FREE VRAM AFTER` line in the summary is what is
-actually left for your scene, and it is the measurement the whole VRAM budget rests on.
-
-
+  actually left for your scene, and it is the measurement the whole VRAM budget rests on.
 
 #### `run.bat`
 
@@ -1131,103 +1099,207 @@ something breaks in three weeks, you can tell whether the environment changed or
 
 #### What comes next
 
-Setup is done. The build plan in `TheOracleSystem.md` takes it from here, and the first two phases
-need no model code at all:
+Setup is done. **Step 13 proves it end to end**, then the build plan in `TheOracleSystem.md` takes
+over — and its first two phases need no model code at all:
 
-
-| Phase | What                                                                                       | Why first                                                                                                           |
-| ----- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| **A** | Audio hardware — mixer routing, mic channel strip, the aux send to the dongle, VCV on ASIO | Prove the signal path before any software depends on it                                                             |
-| **0** | WebSocket server + TD patch playing one fixed WAV                                          | Proves the plumbing and the file handshake. Every later problem is then a model problem, not an integration mystery |
-| 1     | `stt.py`                                                                                   | Already verified by the diagnostic — this is wiring it up                                                           |
-
+| Phase | What | Why first |
+| --- | --- | --- |
+| **A** | Audio hardware — mixer routing, mic channel strip, the aux send to the dongle, VCV on ASIO | Prove the signal path before any software depends on it |
+| **0** | WebSocket server + TD patch playing one fixed WAV | Proves the plumbing and the file handshake. Every later problem is then a model problem, not an integration mystery |
+| 1 | `stt.py` | Already verified by the diagnostic — this is wiring it up |
 
 Phase A needs no computer at all beyond the mixer, so it can happen while the writing in
 `stories/` continues.
 
 ---
 
+### Step 13 — Prove the whole chain works
 
+Setup is done; this is the test that says so. A pulse in TouchDesigner records from the microphone,
+transcribes it, asks Qwen for a reply, speaks it with Piper, and sends the audio back for
+TouchDesigner to play. Every part in one round trip, with no engine code yet.
+
+It uses `scripts/smoke_test.py` — a test rig, not the engine. It records for a fixed six seconds
+instead of listening for the end of speech, keeps no conversation and has none of the guardrails.
+It exists to prove the parts are connected.
+
+#### 13a. How the two programs talk
+
+The engine opens a **WebSocket server** on `127.0.0.1:8765`. TouchDesigner connects to it as a
+client with a **WebSocket DAT**, and they exchange one JSON object per message. TouchDesigner sends
+`listen_start` when the sensor fires; the engine sends back state changes, the transcript, and
+finally `response_ready` with the name of a WAV file to play.
+
+Nothing else connects them. No shared files beyond the WAV, no polling, no OSC in this test.
+
+#### 13b. TouchDesigner operators
+
+In a new base COMP, create these and name them exactly:
+
+| Name | Operator | Settings |
+| --- | --- | --- |
+| `oracle_ws` | WebSocket DAT | Network Address `127.0.0.1`, Port `8765`, Active **on**. Callbacks DAT → `ws_callbacks` |
+| `ws_callbacks` | Text DAT | Paste `td/scripts/ws_callbacks.py` into it |
+| `oracle_state` | Table DAT | Leave empty — the callback fills it |
+| `oracle_text` | Text DAT | Leave empty — receives the spoken text |
+| `oracle_audio` | Audio File In CHOP | Play mode **Sequential**, Loop **off**, Volume 1 |
+| `trigger` | Constant CHOP | One channel, value 0 — you will set it to 1 by hand |
+| `trigger_exec` | CHOP Execute DAT | CHOP → `trigger`, **Off to On** enabled |
+
+Then connect `oracle_audio` to an **Audio Device Out CHOP** for each output you are using — the
+HDMI screen, and the small interface feeding the mixer. See [`INTEGRATION.md`](INTEGRATION.md).
+
+Only `oracle_ws` and `ws_callbacks` are strictly required. Anything else missing is reported once
+in the textport and skipped, so you can build the patch up in pieces and still see what is arriving.
+
+Two things to edit in `ws_callbacks`:
+
+- `AUDIO_DIR` — the absolute path to your repository's `runtime/audio` folder, with forward slashes.
+- In `trigger_exec`, the body of `onOffToOn`:
+
+  ```python
+  def onOffToOn(channel, sampleIndex, val, prev):
+      mod(op('ws_callbacks')).listen_start()
+      return
+  ```
+
+  **`mod()` is not optional.** `op('ws_callbacks')` returns the *DAT operator* — a piece of the
+  network, which has parameters and cells but no functions of yours. `mod()` imports the text
+  inside it as a Python module, and that is the thing with `listen_start` on it. Without the
+  wrapper you get `'td.textDAT' object has no attribute 'listen_start'`. The same applies anywhere
+  else you call into a Text DAT.
+
+  Use `onOffToOn`, not `onOnToOff`. Both fire during a manual test, but the rising edge is what the
+  HC-SR04 gives you later when a visitor steps up to the stand, so wire it that way now.
+
+#### 13c. Run it
+
+In Git Bash, with the environment active:
+
+```bash
+python scripts/smoke_test.py
+```
+
+It loads Whisper, the Piper voices and Qwen, then waits:
+
+```
+  whisper loaded in 3.4s
+  piper voices loaded: de, en, es, et, fi, it, ja, pt, sv, zh
+  qwen warm
+
+  listening on ws://127.0.0.1:8765
+  pulse the trigger in TouchDesigner, or press Enter here
+```
+
+Open your TouchDesigner project. `oracle_ws` should show as connected, and the terminal should say
+`TouchDesigner connected`.
+
+Now set `trigger` to 1, then back to 0. In the terminal:
+
+```
+  ← listen_start
+  recording 6s — speak now
+  heard [fi 0.98]: "Mitä minulle tapahtuu?"
+  reply: "Yksitoista vuotta työtä jota et kunnioita. Sitten talvi, ja veitsi joka pysyy terävänä."
+  wav: e50f7cfa4ea14a5387a91f45a324e179.wav  5.2s
+  timings  stt 0.41s   llm 3.10s   tts 0.38s   → 3.89s from silence to audio
+```
+
+And in the room, the Oracle speaks.
+
+You can also press Enter in the terminal to fire a round without TouchDesigner — useful for testing
+the models before the patch exists.
+
+#### 13d. What each part of the output tells you
+
+| Line | Proves |
+| --- | --- |
+| `piper voices loaded: …` | All ten voices are present and readable |
+| `TouchDesigner connected` | The WebSocket DAT is reaching the engine |
+| `← listen_start` | The CHOP pulse and the callback work |
+| `heard [fi 0.98]` | The microphone reaches Python, and recognition and language detection work |
+| `reply:` | Ollama answered with thinking off |
+| `wav: …  5.2s` | Piper wrote a playable file and its duration was measured |
+| Audio in the room | The handshake, the file path validation and TouchDesigner's playback all work |
+| `timings` | Your real latency — compare against the budget in `TheOracleSystem.md` |
+
+**If you hear the voice from the screen and the monitors as an echo, that is expected at this
+point** and it is what Step 8 of the commissioning list in `INTEGRATION.md` fixes: delay Aux 1–4 on
+the mixer until the two collapse into one sound. This test WAV is a good source for that
+measurement.
+
+#### 13e. If something does not work
+
+| Symptom | Where the break is |
+| --- | --- |
+| `keepalive ping timeout` in the terminal, TD reconnecting over and over | The WebSocket DAT does not answer keepalive pings. `smoke_test.py` passes `ping_interval=None` to prevent this — check you have the current version |
+| `onReceiveText() missing 1 required positional argument: 'bytes'` | Your TouchDesigner build passes three arguments, not four. The callback's signature ends in `*args, **kwargs` to accept either — check you have the current `ws_callbacks.py` |
+| `td.tdError: Cell does not exist` | A row was written before it was created. The current `ws_callbacks.py` creates rows on demand — re-paste it |
+| `'td.textDAT' object has no attribute 'listen_start'` | A missing `mod()`. Call `mod(op('ws_callbacks')).listen_start()`, not `op('ws_callbacks').listen_start()` — `op()` gives you the operator, `mod()` gives you the module inside it |
+| `operator 'oracle_x' not found` in the textport | That operator is missing or misnamed. Create it, or ignore it — only `oracle_ws` is required |
+| `oracle_ws` never connects | The engine is not running, or the port differs from `bridge.ws_port` |
+| `listen_start` never arrives | `trigger_exec` is not calling `listen_start`, Off to On is disabled, or the trigger went 0 → 1 while the DAT was off |
+| `nothing heard` | Microphone path — check `audio.input_device` with `check_env.py`, and the mixer's Aux 5 |
+| `matches 3 devices` for a device name | Windows lists the card once per host API. The current `check_env.py` chooses one and says which; if you have an older copy, add `scripts/audio_devices.py` |
+| `Error opening InputStream` / device unavailable | Something else holds it exclusively — usually an ASIO client (TouchDesigner or VCV Rack) on the same interface. See [`INTEGRATION.md`](INTEGRATION.md) |
+| Terminal shows a reply, no sound in the room | TouchDesigner's side: `AUDIO_DIR`, or the Audio Device Out CHOPs |
+| Reasoning text appears in the reply | Thinking is on — check `think=False` is reaching Ollama |
+| Everything works but takes 10+ seconds | The models were cold. Run it twice; set `OLLAMA_KEEP_ALIVE=-1` |
+
+Once this round trip works, the piece exists — everything after it is replacing the test rig with
+the real engine, one module at a time, against a path you have already proven.
+
+---
 
 ## Audio hardware
 
-Only one program can own the mixer's USB interface on Windows, so it goes to **VCV Rack**, which
-is the only one needing separate outputs per speaker. The voice does not go near the mixer at all.
+The full wiring, the mixer patch sheet, the microphone channel settings, the delay alignment and a
+commissioning checklist are in **[`INTEGRATION.md`](INTEGRATION.md)**. The short version:
 
 ```
 Microphone ──> CQ ch1 (high-pass, gate, compressor)
-                 └──> TRS Out 5 (mic only) ──> USB dongle ──> engine
+                 └──> Aux 5 (mic only) ──> small USB interface ──> engine
 
-VCV Rack ──USB/ASIO──> CQ USB returns 1-4 ──> CQ Out 1-4 ──> four monitors around the room
+VCV Rack ──USB/ASIO──> CQ USB returns ──> Aux 1-4 ──> four monitors
 
-TouchDesigner ──HDMI──> centre screen's own speakers (the voice)
+TouchDesigner ──HDMI──────────────> centre screen's speakers
+              └─USB─> small interface ──> CQ stereo in ──> Aux 1-4
 ```
 
+Three things to know before wiring anything:
 
-
-### The voice goes out HDMI, and that is the right call
-
-Your instinct here is correct, though for a different reason than the one you gave. HDMI does not
-avoid lag — it **adds** it, typically 40–150 ms. What it avoids is the *echo*.
-
-The earlier design had the voice playing from the mixer **and** the screen at once: two clock
-domains, two arrival times, an audible slap-back from the middle of the room. Playing it from one
-place only removes that entirely. And 100 ms on a response that already takes four to six seconds
-is not something anyone will perceive.
-
-What you get:
-
-- **No USB DAC.** One less device, one less cable, one less thing to fail at 9am.
-- **The voice localises to the screen.** The thing talking to you is in front of you. With VCV's
-bed moving around the four surrounds, that separation is exactly the spatial design you want.
-- **Two mixer outputs freed.**
-- **TouchDesigner's audio analysis still works**, because TD is still the one playing the file.
-
-Two things to watch. Windows drops the HDMI audio endpoint when the display sleeps or is
-re-plugged, and TouchDesigner will then need its output device re-selected — **disable display
-sleep and USB power management on the show machine.** And the screen's built-in speakers are
-small; audition the Finnish voice through them specifically, since that is what every visitor
-actually hears.
-
-### The mic still goes through the mixer
-
-Deliberately. The channel strip's high-pass, noise gate and compressor do more for speech
-recognition accuracy than any software setting, and with a stand mic that visitors speak closely
-into you are already in the best case. Set the gate with the monitors at show level, not in a
-silent room.
-
-Assign **TRS Out 5** as a mix containing channel 1 only, into a cheap USB input the engine owns
-exclusively. That aux mix contains only the microphone — no voice, no VCV — so the installation
-physically cannot transcribe itself even if the software's gating fails.
-
-Never route the microphone to a monitor mix. There is no reason to amplify the visitor, and it
-puts an open mic a few metres from four speakers.
+- **Only one program can use the mixer's USB.** VCV Rack gets it, because it is the only one
+  needing four separate channels. The voice and the microphone reach the mixer as ordinary audio
+  through a small second interface.
+- **The voice plays from the screen and the monitors at once, and they do not arrive together.**
+  HDMI runs 40–150 ms behind. The mixer's output delay on Aux 1–4 holds the monitors back until the
+  two land as one sound. Without it you get a slap-back echo.
+- **Aux 5 carries the microphone and nothing else**, so the installation physically cannot
+  transcribe its own voice, whatever the software does.
 
 ## The story material
 
 `stories/` is where the piece actually comes from. Almost everything about how it feels lives here,
 not in the Python.
 
-
-| File              | What it is                                                                                            | When the model sees it                              |
-| ----------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `instructions.md` | Who the Oracle is, how it speaks, the shape of a visit, who it may look up, and everything it refuses | Every turn                                          |
-| `world.md`        | 2813, the archive, the collective, the Oracle's voice, and the rules for building somebody's future   | Every turn                                          |
-| `origin.md`       | The full history, 2062 to 2813                                                                        | **Only on a follow-up** about what the Oracle is    |
-| `origin_piper.md` | The canonical text of the spoken origin                                                               | Never — it is the script for the recordings         |
-| `lineage.md`      | Notes on the books, films and real places behind the piece                                            | Never — it is for you                               |
-| `stories.md`      | Fragments and reference material                                                                      | Every turn, or selected fragments if it grows large |
-
+| File | What it is | When the model sees it |
+| --- | --- | --- |
+| `instructions.md` | Who the Oracle is, how it speaks, the shape of a visit, who it may look up, and everything it refuses | Every turn |
+| `world.md` | 2813, the archive, the collective, the Oracle's voice, and the rules for building somebody's future | Every turn |
+| `origin.md` | The full history, 2062 to 2813 | **Only on a follow-up** about what the Oracle is |
+| `origin_piper.md` | The canonical text of the spoken origin | Never — it is the script for the recordings |
+| `lineage.md` | Notes on the books, films and real places behind the piece | Never — it is for you |
+| `stories.md` | Fragments and reference material | Every turn, or selected fragments if it grows large |
 
 Together `instructions.md` and `world.md` come to about **7,000 tokens**, sent on every turn. That
 is why Step 2f matters. Two things keep that affordable:
 
 - **Everything fixed goes first, byte-for-byte identical every time.** Ollama remembers the start
-of the last prompt and skips reprocessing it when the next prompt starts the same way. So the
-engine sends `instructions.md` and `world.md` as an unchanging system message, and puts
-everything that varies — the web result, the established facts, `origin.md` — *after*
-it, in the turn's user message. Put a variable block inside the system prompt and every turn
-pays to reread 7,000 tokens, which on a laptop is two to four seconds.
+  of the last prompt and skips reprocessing it when the next prompt starts the same way. So the
+  engine sends `instructions.md` and `world.md` as an unchanging system message, and puts
+  everything that varies — the web result, the established facts, `origin.md` — *after*
+  it, in the turn's user message. Put a variable block inside the system prompt and every turn
+  pays to reread 7,000 tokens, which on a laptop is two to four seconds.
 
 If the prompt grows much past this, trim `world.md` before raising `num_ctx` again — graphics
 memory is the constraint, not the model.
@@ -1254,20 +1326,16 @@ children, then death hears three pages of the same book, not three unrelated for
 `world.md` lists the kinds of question and the rule for each, including the rules for death, which
 nothing overrides.
 
-
-| Visitor asks                 | Answer                                                                                      |
-| ---------------------------- | ------------------------------------------------------------------------------------------- |
-| "What is my future?"         | Three movements: what they did, who was with them, how it ended                             |
-| "Who will I marry?"          | Described by what they do or carry — never named                                            |
-| "Will I have children?"      | Whether, how many, one detail — never harm to a child                                       |
-| "How do I die?"              | Far off, peaceful or mythic, one sentence. Not given at all if the visitor seems distressed |
-| "Should I leave?"            | A consequence, never a command                                                              |
-| "Who was I before?"          | An invented person from the 2126 archive, never a real one                                  |
-| "What happens to the world?" | Welcome — the present from the web, the rest from the archive                               |
-| "What happens to my mother?" | Declined in character; the Oracle reads what she left in *them*                             |
-
-
-
+| Visitor asks | Answer |
+| --- | --- |
+| "What is my future?" | Three movements: what they did, who was with them, how it ended |
+| "Who will I marry?" | Described by what they do or carry — never named |
+| "Will I have children?" | Whether, how many, one detail — never harm to a child |
+| "How do I die?" | Far off, peaceful or mythic, one sentence. Not given at all if the visitor seems distressed |
+| "Should I leave?" | A consequence, never a command |
+| "Who was I before?" | An invented person from the 2126 archive, never a real one |
+| "What happens to the world?" | Welcome — the present from the web, the rest from the archive |
+| "What happens to my mother?" | Declined in character; the Oracle reads what she left in *them* |
 
 ### How the origin is told
 
@@ -1277,13 +1345,11 @@ people who did not ask. So the history is rationed in two steps.
 **The first time** a visitor asks what the Oracle is, where it came from, or how it was made, no
 model call happens. The engine plays a pre-recorded narration of about two minutes:
 
-
-| Visitor spoke                  | Plays                                                            |
-| ------------------------------ | ---------------------------------------------------------------- |
-| Finnish                        | `origin_fi_female.wav` or `origin_fi_male.wav`, chosen at random |
-| Spanish                        | `origin_es.wav`                                                  |
-| English, or any other language | `origin_en.wav`                                                  |
-
+| Visitor spoke | Plays |
+| --- | --- |
+| Finnish | `origin_fi_female.wav` or `origin_fi_male.wav`, chosen at random |
+| Spanish | `origin_es.wav` |
+| English, or any other language | `origin_en.wav` |
 
 The Finnish choice is made once per visit, so the same visitor never hears both. The narration is
 then written into the session history as something the Oracle has already said, so the model will
@@ -1295,10 +1361,10 @@ normally, from the full history, for the rest of that visit.
 Why a recording rather than a generated answer:
 
 1. **It is always right.** The origin is the one thing in the piece with a canonical text. A 4B
-  model improvising seven centuries of history will eventually get a date wrong, in front of the
+   model improvising seven centuries of history will eventually get a date wrong, in front of the
    one visitor who cared enough to ask.
 2. **No wait.** The longest answer becomes the fastest — playback starts at once, instead of after
-  four to six seconds, at the moment someone has leaned in.
+   four to six seconds, at the moment someone has leaned in.
 3. **No tokens.** The most expensive answer costs nothing.
 
 `corpus.py` detects the origin question with a keyword and pattern check across the exhibition's
@@ -1307,39 +1373,35 @@ languages, and errs toward triggering.
 Two things worth deciding deliberately rather than by default:
 
 - **Swedish speakers hear the English recording.** Swedish is one of the main languages of the
-piece. If you record a Swedish version, add `sv: [origin_sv.wav]` to `prerendered.origin` and it
-is used automatically.
+  piece. If you record a Swedish version, add `sv: [origin_sv.wav]` to `prerendered.origin` and it
+  is used automatically.
 - **A Finnish visitor may hear the origin in one voice and the rest of the visit in another**,
-since the live Finnish Piper voice is a single voice. The world supports this — the Oracle holds
-everyone who went inside the collective, and it would be odd if it had only one voice — but
-listen to both combinations in the room before deciding whether to keep the random choice or
-match the recording to the live voice.
+  since the live Finnish Piper voice is a single voice. The world supports this — the Oracle holds
+  everyone who went inside the collective, and it would be odd if it had only one voice — but
+  listen to both combinations in the room before deciding whether to keep the random choice or
+  match the recording to the live voice.
 
 `origin_piper.md` is the source of truth for what the recordings say. If the text changes,
 re-record, and bring `origin.md` into line so a follow-up answer never contradicts the recording.
 
 ---
 
-
-
 ## Languages
 
 Ten languages, one Piper voice each:
 
-
-| Language   | Code | Voice                        | Origin recording                |
-| ---------- | ---- | ---------------------------- | ------------------------------- |
-| Finnish    | `fi` | `fi_FI-harri-medium`         | Yes — two, one chosen at random |
-| Swedish    | `sv` | `sv_SE-alma-medium`          | No — answered live              |
-| English    | `en` | `en_GB-alba-medium`          | Yes                             |
-| Spanish    | `es` | `es_MX-ald-medium`           | Yes                             |
-| German     | `de` | `de_DE-thorsten-high`        | No — answered live              |
-| Estonian   | `et` | `et_EE-news-medium`          | No — answered live              |
-| Italian    | `it` | `it_IT-paola-medium`         | No — answered live              |
-| Portuguese | `pt` | `pt_BR-cadu-medium`          | No — answered live              |
-| Japanese   | `ja` | `ja_JP-hi_fi_captain-medium` | No — answered live              |
-| Chinese    | `zh` | `zh_CN-huayan-medium`        | No — answered live              |
-
+| Language | Code | Voice | Origin recording |
+| --- | --- | --- | --- |
+| Finnish | `fi` | `fi_FI-harri-medium` | Yes — two, one chosen at random |
+| Swedish | `sv` | `sv_SE-alma-medium` | No — answered live |
+| English | `en` | `en_GB-alba-medium` | Yes |
+| Spanish | `es` | `es_MX-ald-medium` | Yes |
+| German | `de` | `de_DE-thorsten-high` | No — answered live |
+| Estonian | `et` | `et_EE-news-medium` | No — answered live |
+| Italian | `it` | `it_IT-paola-medium` | No — answered live |
+| Portuguese | `pt` | `pt_BR-cadu-medium` | No — answered live |
+| Japanese | `ja` | `ja_JP-hi_fi_captain-medium` | No — answered live |
+| Chinese | `zh` | `zh_CN-huayan-medium` | No — answered live |
 
 Speech recognition understands around 99 languages regardless; this list is what the Oracle can
 *speak*. A visitor using anything else gets a reply in `default_language`, because the engine never
@@ -1364,9 +1426,9 @@ So the language is **sticky**:
 
 1. The first confident detection sets the visit's language.
 2. After that, changing it needs a **higher bar** than the initial detection: `switch_confidence`
-  0.75 rather than 0.5.
+   0.75 rather than 0.5.
 3. Utterances shorter than `switch_min_words` (3) or `switch_min_speech_s` (1.5 s) **never** change
-  the language, whatever they are detected as. They inherit whatever is in force.
+   the language, whatever they are detected as. They inherit whatever is in force.
 4. A language with no installed voice never becomes the visit's language.
 
 A visitor who genuinely switches speaks a whole sentence in the new language and is followed
@@ -1393,8 +1455,6 @@ Record more narrations later if you want them; adding one is a line in `config.y
 
 ---
 
-
-
 ## How a visit is stored
 
 Raw material exists only while a visitor is standing there. Three stages:
@@ -1407,20 +1467,16 @@ flowchart LR
   B -.delete.-> E[raw directory gone]
 ```
 
-
-
 **1. During the visit** — `runtime/sessions/<id>/` holds everything, and it is the only place the
 prompt builder can read, which is what keeps visits sealed from each other:
 
-
-| File                      | What it holds                                                                                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `transcript.jsonl`        | Every turn: what the visitor said and what the Oracle replied                                                                                  |
-| `fate.json`               | The established facts of the life the Oracle is foretelling — kept consistent across answers                                                   |
-| `responses/<n>_raw.json`  | A web search result exactly as it came back                                                                                                    |
+| File | What it holds |
+| --- | --- |
+| `transcript.jsonl` | Every turn: what the visitor said and what the Oracle replied |
+| `fate.json` | The established facts of the life the Oracle is foretelling — kept consistent across answers |
+| `responses/<n>_raw.json` | A web search result exactly as it came back |
 | `responses/<n>_clean.txt` | The same result cleaned: markup stripped, sensitive categories dropped, cut to one paragraph. **This is the only version the model ever sees** |
-| `audio/`                  | Generated WAVs                                                                                                                                 |
-
+| `audio/` | Generated WAVs |
 
 **2. On visit end** — the conversation and the fate sheet are compacted into a short summary.
 
@@ -1438,17 +1494,13 @@ person who asked, and is gone with their visit.
 
 ### What is removed
 
-
-| Removed                     | How                                                                                                         |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| The name they gave          | The engine asked for it, so it knows the exact string to redact — the most reliable redaction in the system |
-| Any other names             | Pattern match plus a name list for the exhibition's languages                                               |
-| Numbers that could identify | Phone numbers, addresses, dates of birth, ID-shaped strings                                                 |
-| Emails and URLs             | Pattern match                                                                                               |
-| The audio                   | Deleted with the session directory — voices are biometric data and there is no reason to keep them          |
-
-
-
+| Removed | How |
+| --- | --- |
+| The name they gave | The engine asked for it, so it knows the exact string to redact — the most reliable redaction in the system |
+| Any other names | Pattern match plus a name list for the exhibition's languages |
+| Numbers that could identify | Phone numbers, addresses, dates of birth, ID-shaped strings |
+| Emails and URLs | Pattern match |
+| The audio | Deleted with the session directory — voices are biometric data and there is no reason to keep them |
 
 ### What is kept
 
@@ -1481,45 +1533,41 @@ Once names are spoken into a microphone and written to disk, even briefly, that 
 under GDPR. The design above is defensible because retention is minutes, sanitisation is
 automatic, and nothing identifying survives. Two things keep it that way:
 
-- **Never set** `sanitize_on_end: false` **or** `keep_raw_sessions: true` **during an exhibition.** They
-exist for debugging on your own machine.
+- **Never set `sanitize_on_end: false` or `keep_raw_sessions: true` during an exhibition.** They
+  exist for debugging on your own machine.
 - **Put up a sign.** Something short: that the piece listens, that it forgets, that a summary with
-no names is kept. Visitors mostly find this reassuring rather than off-putting, and it is a
-better answer than being asked about it later.
+  no names is kept. Visitors mostly find this reassuring rather than off-putting, and it is a
+  better answer than being asked about it later.
 
 Web search adds one more line to that sign, because it is the one thing leaving the laptop. What
 leaves is a query the engine wrote about the weather or the city — never anything a visitor said.
 
 ---
 
-
-
 ## Configuration reference
 
 The settings most worth adjusting once it is running:
 
-
-| Setting                                  | Default           | Effect                                                                                                                    |
-| ---------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `audio.silence_ms`                       | 800               | How long a visitor can pause before the engine stops listening. Lower feels snappier; too low cuts people off mid-thought |
-| `audio.preroll_s`                        | 2.0               | Audio kept from before the trigger, so the first word is not lost                                                         |
-| `stt.min_confidence`                     | 0.5               | Below this, the detected language is not trusted and the default is used                                                  |
-| `stt.allowed_languages`                  | fi, sv, en        | Only languages you have a voice for. The engine picks the best-scoring one from this list                                 |
-| `llm.num_predict`                        | 150               | Roughly 45 seconds of speech. Lowering it shortens both the reply and the wait                                            |
-| `llm.temperature`                        | 0.8               | How much replies vary between visitors                                                                                    |
-| `conversation.max_turns`                 | 8                 | Hard cap on a visit. Also the backstop against someone working at the model over many turns                               |
-| `conversation.context_turns`             | 6                 | How much of the visit the model sees. Lower is safer and cheaper; too low and it forgets their name                       |
-| `guard.max_per_minute`                   | 12                | Stops one person monopolising the piece                                                                                   |
-| `websearch.max_per_visit`                | 2                 | Searches per visit. One is usually enough — two details sound like a weather report                                       |
-| `websearch.self_search.enabled`          | true              | Whether a visitor can ask to be looked up at all                                                                          |
-| `websearch.self_search.narrow_questions` | 1                 | Disambiguation attempts before the Oracle gives up gracefully                                                             |
-| `prerendered.origin`                     | fi / es / default | Which recording plays for which language on the first origin question                                                     |
-| `conversation.fate_max_entries`          | 8                 | How many facts of the foretold life the Oracle keeps track of per visit                                                   |
-| `stt.language_lock`                      | sticky            | Whether the visit's language can change, and how easily                                                                   |
-| `stt.switch_confidence`                  | 0.75              | How sure detection must be to change language mid-visit                                                                   |
-| `llm.num_ctx`                            | 16384             | The model's context window. Never lower it below what the prompt needs — see Step 2                                       |
-| `tts.length_scale`                       | 1.0               | Speech speed. Above 1.0 is slower                                                                                         |
-
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `audio.silence_ms` | 800 | How long a visitor can pause before the engine stops listening. Lower feels snappier; too low cuts people off mid-thought |
+| `audio.preroll_s` | 2.0 | Audio kept from before the trigger, so the first word is not lost |
+| `stt.min_confidence` | 0.5 | Below this, the detected language is not trusted and the default is used |
+| `stt.allowed_languages` | fi, sv, en | Only languages you have a voice for. The engine picks the best-scoring one from this list |
+| `llm.num_predict` | 150 | Roughly 45 seconds of speech. Lowering it shortens both the reply and the wait |
+| `llm.temperature` | 0.8 | How much replies vary between visitors |
+| `conversation.max_turns` | 8 | Hard cap on a visit. Also the backstop against someone working at the model over many turns |
+| `conversation.context_turns` | 6 | How much of the visit the model sees. Lower is safer and cheaper; too low and it forgets their name |
+| `guard.max_per_minute` | 12 | Stops one person monopolising the piece |
+| `websearch.max_per_visit` | 2 | Searches per visit. One is usually enough — two details sound like a weather report |
+| `websearch.self_search.enabled` | true | Whether a visitor can ask to be looked up at all |
+| `websearch.self_search.narrow_questions` | 1 | Disambiguation attempts before the Oracle gives up gracefully |
+| `prerendered.origin` | fi / es / default | Which recording plays for which language on the first origin question |
+| `conversation.fate_max_entries` | 8 | How many facts of the foretold life the Oracle keeps track of per visit |
+| `stt.language_lock` | sticky | Whether the visit's language can change, and how easily |
+| `stt.switch_confidence` | 0.75 | How sure detection must be to change language mid-visit |
+| `llm.num_ctx` | 16384 | The model's context window. Never lower it below what the prompt needs — see Step 2 |
+| `tts.length_scale` | 1.0 | Speech speed. Above 1.0 is slower |
 
 Expect about **4–6 seconds** between a visitor finishing speaking and the first word of a generated
 reply, most of it the language model. This is normal and by design — the wait is covered by the
@@ -1528,64 +1576,57 @@ starts immediately.
 
 ---
 
-
-
 ## Troubleshooting
 
-
-| Symptom                                                                                                  | Cause                                                                        | Fix                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `uv: command not found` in Git Bash                                                                      | uv is not installed, or Git Bash has a stale PATH                            | Run `ls ~/.local/bin/uv.exe`. If it exists, close all Git Bash windows (and VS Code, if it runs there) and reopen, or `source scripts/setup-shell.sh`. If it does not exist, rerun the installer in **PowerShell** (Step 1) or `winget install --id=astral-sh.uv -e`                       |
-| `No interpreter found for Python 3.11.x ... downloads are set to 'never'`                                | `uv venv` was not told where TouchDesigner's Python is                       | `source scripts/setup-shell.sh`, check `"$TD_PYTHON" --version`, then `uv venv --python "$TD_PYTHON"` (Step 7)                                                                                                                                                                             |
-| `Using Python ... environment at: C:\Program Files\Derivative\TouchDesigner\bin` then `Access is denied` | `UV_PYTHON` is set, so uv is installing into TouchDesigner itself            | `unset UV_PYTHON`, update `scripts/setup-shell.sh` to the current version (Step 5), retry. **Never** run as administrator to get past this                                                                                                                                                 |
-| A package worked, then vanished after `uv sync`                                                          | It was installed with `uv pip install`                                       | Install it with `uv add` so it is in `pyproject.toml`                                                                                                                                                                                                                                      |
-| `python -c "import sys..."` prints a different version than TouchDesigner                                | uv built the environment on the wrong Python                                 | `rm -rf .venv`, correct the path in `scripts/setup-shell.sh`, redo Step 7                                                                                                                                                                                                                  |
-| `Could not locate cudnn64_9.dll` or `cublas64_12.dll`                                                    | CUDA libraries not on PATH                                                   | Check `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` are in `pyproject.toml` (`uv add` them if not); add their `bin` folders under `.venv\Lib\site-packages\nvidia` to PATH in `run.bat`. If it persists, use Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
-| An error mentioning cuDNN 8                                                                              | Version mismatch                                                             | `uv add "ctranslate2==4.4.0"`                                                                                                                                                                                                                                                              |
-| A guide tells you to download Piper from `rhasspy/piper`                                                 | That repository is archived                                                  | Use `pip install piper-tts`, which is OHF-Voice/piper1-gpl — see Step 9                                                                                                                                                                                                                    |
-| `ollama: command not found`                                                                              | PATH not refreshed                                                           | Reopen PowerShell; if it persists, restart Windows                                                                                                                                                                                                                                         |
-| Connection refused on port 11434                                                                         | Ollama server not running                                                    | Check the system tray, or start Ollama from the Start menu                                                                                                                                                                                                                                 |
-| First visitor after a quiet spell waits 15 s                                                             | Model unloaded                                                               | Set `OLLAMA_KEEP_ALIVE=-1` and restart Ollama (Step 2e)                                                                                                                                                                                                                                    |
-| `import yaml` in TD prints a path under `Program Files\Derivative`                                       | Normal — TD ships its own yaml and numpy, and they take priority             | Not a fault. Verify the link with `import ollama` instead (Step 11)                                                                                                                                                                                                                        |
-| tdPyEnvManager says linked, but a textport import fails                                                  | The link is not active for TD's own Python                                   | Harmless — nothing in this project imports from the venv inside TD. Skip it (Step 11)                                                                                                                                                                                                      |
-| Open CLI shows `(theoracle)` and you expected `(.venv)`                                                  | uv names the environment after the project folder                            | Correct as-is. `(theoracle)` is your `.venv`                                                                                                                                                                                                                                               |
-| TouchDesigner behaves strangely after linking the environment                                            | NumPy version conflict                                                       | Make the `numpy` pin in `pyproject.toml` match what TouchDesigner reports, then `uv sync`                                                                                                                                                                                                  |
-| The Oracle ignores rules it clearly has, or breaks character                                             | The prompt is being cut to fit a too-small context window                    | Check `llm.num_ctx` is 16384 in `config.yaml` and that the engine sends it on every request                                                                                                                                                                                                |
-| Replies take far too long, or the JSON contains reasoning text                                           | Thinking mode is on — it is the default for Qwen3.5                          | Check `llm.think: false`, and that the engine passes `think=False` on every call                                                                                                                                                                                                           |
-| `ollama pull qwen3.5:4b` fails                                                                           | Ollama is too old for this model                                             | Reinstall from ollama.com/download over the existing install                                                                                                                                                                                                                               |
-| Every reply takes several seconds longer than it should                                                  | The fixed part of the prompt is changing between turns, so Ollama rereads it | Keep `instructions.md` + `world.md` as an unchanging system message; put web results and `<established>` in the user message                                                                                                                                                               |
-| Out of graphics memory                                                                                   | TouchDesigner scene grew, or context window raised further                   | Measure with `scripts/check_env.py`. Setting `OLLAMA_KV_CACHE_TYPE=q8_0` saves a little more; beyond that, see Plan B in `TheOracleSystem.md`                                                                                                                                              |
-| The Oracle contradicts itself across answers                                                             | Fate sheet not being passed back                                             | Check `fate.json` is written after each reply and injected as `<established>` on the next turn                                                                                                                                                                                             |
-| Engine hangs for a minute at startup                                                                     | Trying to reach Hugging Face with no network                                 | Confirm `HF_HUB_OFFLINE=1` is in `run.bat`                                                                                                                                                                                                                                                 |
-| Engine cannot find the microphone                                                                        | Device name does not match                                                   | Run `scripts/check_env.py`, copy the exact device-name fragment into `config.yaml`                                                                                                                                                                                                         |
-| No voice after the screen went to sleep                                                                  | Windows dropped the HDMI audio endpoint                                      | Re-select the output in TouchDesigner; turn display sleep off on the show machine                                                                                                                                                                                                          |
-| Origin question plays nothing                                                                            | Recording missing or misnamed                                                | Check the four files in `voices/prerendered/` match the names in `config.yaml` exactly                                                                                                                                                                                                     |
-| Origin plays, then the Oracle tells it again                                                             | Narration not written to the session history                                 | Check the prerendered handoff in `engine/__main__.py` records it as an Oracle turn                                                                                                                                                                                                         |
-| A reply comes out in a language with no voice                                                            | Language added to `allowed_languages` before its voice                       | Remove it, or install the voice and add it to `tts.voices`                                                                                                                                                                                                                                 |
-| The Oracle switches language after a short "okay" or "joo"                                               | Detection flipped on a short utterance                                       | Confirm `language_lock: sticky`; raise `switch_min_words` or `switch_confidence`                                                                                                                                                                                                           |
-| A visitor switched language deliberately and the Oracle did not follow                                   | The switch bar is too high for how they spoke                                | Lower `switch_confidence`, or `switch_min_words` to 2                                                                                                                                                                                                                                      |
-| Finnish transcribed as Estonian                                                                          | Short utterance, uncertain detection                                         | Normal. `min_confidence` catches it; adding Estonian with a voice turns it into a feature                                                                                                                                                                                                  |
-| Whisper transcribes "Kiitos" from silence                                                                | Hallucination on near-empty audio                                            | Set the mixer's gate properly — a hardware fix, not a software one                                                                                                                                                                                                                         |
-| Web search returns an auth error                                                                         | Key missing or loaded too late                                               | Check `.env`, and that `load_dotenv()` runs **before** `import ollama`                                                                                                                                                                                                                     |
-| Web search works in `ollamaweb.py` but not in the engine                                                 | Import order again                                                           | `load_dotenv()` must be the first thing `engine/__main__.py` does                                                                                                                                                                                                                          |
-| Visits never end                                                                                         | Sensor stuck, or silence timeout too long                                    | Check `conversation.max_silence_s` and `end_on_sensor_clear_s`; `max_turns` is the backstop                                                                                                                                                                                                |
-| `history/` entries contain a name                                                                        | Sanitisation failed or was disabled                                          | Confirm `sanitize_on_end: true`, delete the affected files, check the name list covers that language                                                                                                                                                                                       |
-| `runtime/sessions/` is filling up                                                                        | Sessions not being closed                                                    | Directories should be deleted at visit end. Check `keep_raw_sessions` is `false`                                                                                                                                                                                                           |
-| The Oracle explains that it cannot do something                                                          | It refused in the wrong voice                                                | Tighten the refusal examples in `stories/instructions.md` — a filter-sounding refusal breaks the piece more than the attempt did                                                                                                                                                           |
-| VCV Rack clicks when someone speaks                                                                      | CPU contention                                                               | Should not happen with Whisper on the GPU. If you moved it to CPU, cap `cpu_threads` and raise VCV's ASIO buffer                                                                                                                                                                           |
-
-
-
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `uv: command not found` in Git Bash | uv is not installed, or Git Bash has a stale PATH | Run `ls ~/.local/bin/uv.exe`. If it exists, close all Git Bash windows (and VS Code, if it runs there) and reopen, or `source scripts/setup-shell.sh`. If it does not exist, rerun the installer in **PowerShell** (Step 1) or `winget install --id=astral-sh.uv -e` |
+| `No interpreter found for Python 3.11.x ... downloads are set to 'never'` | `uv venv` was not told where TouchDesigner's Python is | `source scripts/setup-shell.sh`, check `"$TD_PYTHON" --version`, then `uv venv --python "$TD_PYTHON"` (Step 7) |
+| `Using Python ... environment at: C:\Program Files\Derivative\TouchDesigner\bin` then `Access is denied` | `UV_PYTHON` is set, so uv is installing into TouchDesigner itself | `unset UV_PYTHON`, update `scripts/setup-shell.sh` to the current version (Step 5), retry. **Never** run as administrator to get past this |
+| A package worked, then vanished after `uv sync` | It was installed with `uv pip install` | Install it with `uv add` so it is in `pyproject.toml` |
+| `python -c "import sys..."` prints a different version than TouchDesigner | uv built the environment on the wrong Python | `rm -rf .venv`, correct the path in `scripts/setup-shell.sh`, redo Step 7 |
+| `Could not locate cudnn64_9.dll` or `cublas64_12.dll` | CUDA libraries not on PATH | Check `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` are in `pyproject.toml` (`uv add` them if not); add their `bin` folders under `.venv\Lib\site-packages\nvidia` to PATH in `run.bat`. If it persists, use Purfview's `whisper-standalone-win` library archive and add its folder to PATH |
+| An error mentioning cuDNN 8 | Version mismatch | `uv add "ctranslate2==4.4.0"` |
+| A guide tells you to download Piper from `rhasspy/piper` | That repository is archived | Use `pip install piper-tts`, which is OHF-Voice/piper1-gpl — see Step 9 |
+| `ollama: command not found` | PATH not refreshed | Reopen PowerShell; if it persists, restart Windows |
+| Connection refused on port 11434 | Ollama server not running | Check the system tray, or start Ollama from the Start menu |
+| First visitor after a quiet spell waits 15 s | Model unloaded | Set `OLLAMA_KEEP_ALIVE=-1` and restart Ollama (Step 2e) |
+| `import yaml` in TD prints a path under `Program Files\Derivative` | Normal — TD ships its own yaml and numpy, and they take priority | Not a fault. Verify the link with `import ollama` instead (Step 11) |
+| tdPyEnvManager says linked, but a textport import fails | The link is not active for TD's own Python | Harmless — nothing in this project imports from the venv inside TD. Skip it (Step 11) |
+| Open CLI shows `(theoracle)` and you expected `(.venv)` | uv names the environment after the project folder | Correct as-is. `(theoracle)` is your `.venv` |
+| TouchDesigner behaves strangely after linking the environment | NumPy version conflict | Make the `numpy` pin in `pyproject.toml` match what TouchDesigner reports, then `uv sync` |
+| The Oracle ignores rules it clearly has, or breaks character | The prompt is being cut to fit a too-small context window | Check `llm.num_ctx` is 16384 in `config.yaml` and that the engine sends it on every request |
+| Replies take far too long, or the JSON contains reasoning text | Thinking mode is on — it is the default for Qwen3.5 | Check `llm.think: false`, and that the engine passes `think=False` on every call |
+| `ollama pull qwen3.5:4b` fails | Ollama is too old for this model | Reinstall from ollama.com/download over the existing install |
+| Every reply takes several seconds longer than it should | The fixed part of the prompt is changing between turns, so Ollama rereads it | Keep `instructions.md` + `world.md` as an unchanging system message; put web results and `<established>` in the user message |
+| Out of graphics memory | TouchDesigner scene grew, or context window raised further | Measure with `scripts/check_env.py`. Setting `OLLAMA_KV_CACHE_TYPE=q8_0` saves a little more; beyond that, see Plan B in `TheOracleSystem.md` |
+| The Oracle contradicts itself across answers | Fate sheet not being passed back | Check `fate.json` is written after each reply and injected as `<established>` on the next turn |
+| Engine hangs for a minute at startup | Trying to reach Hugging Face with no network | Confirm `HF_HUB_OFFLINE=1` is in `run.bat` |
+| Engine cannot find the microphone | Device name does not match | Run `scripts/check_env.py`, copy the exact device-name fragment into `config.yaml` |
+| No voice after the screen went to sleep | Windows dropped the HDMI audio endpoint | Re-select the output in TouchDesigner; turn display sleep off on the show machine |
+| Origin question plays nothing | Recording missing or misnamed | Check the four files in `voices/prerendered/` match the names in `config.yaml` exactly |
+| Origin plays, then the Oracle tells it again | Narration not written to the session history | Check the prerendered handoff in `engine/__main__.py` records it as an Oracle turn |
+| A reply comes out in a language with no voice | Language added to `allowed_languages` before its voice | Remove it, or install the voice and add it to `tts.voices` |
+| The Oracle switches language after a short "okay" or "joo" | Detection flipped on a short utterance | Confirm `language_lock: sticky`; raise `switch_min_words` or `switch_confidence` |
+| A visitor switched language deliberately and the Oracle did not follow | The switch bar is too high for how they spoke | Lower `switch_confidence`, or `switch_min_words` to 2 |
+| Finnish transcribed as Estonian | Short utterance, uncertain detection | Normal. `min_confidence` catches it; adding Estonian with a voice turns it into a feature |
+| Whisper transcribes "Kiitos" from silence | Hallucination on near-empty audio | Set the mixer's gate properly — a hardware fix, not a software one |
+| Web search returns an auth error | Key missing or loaded too late | Check `.env`, and that `load_dotenv()` runs **before** `import ollama` |
+| Web search works in `ollamaweb.py` but not in the engine | Import order again | `load_dotenv()` must be the first thing `engine/__main__.py` does |
+| Visits never end | Sensor stuck, or silence timeout too long | Check `conversation.max_silence_s` and `end_on_sensor_clear_s`; `max_turns` is the backstop |
+| `history/` entries contain a name | Sanitisation failed or was disabled | Confirm `sanitize_on_end: true`, delete the affected files, check the name list covers that language |
+| `runtime/sessions/` is filling up | Sessions not being closed | Directories should be deleted at visit end. Check `keep_raw_sessions` is `false` |
+| The Oracle explains that it cannot do something | It refused in the wrong voice | Tighten the refusal examples in `stories/instructions.md` — a filter-sounding refusal breaks the piece more than the attempt did |
+| VCV Rack clicks when someone speaks | CPU contention | Should not happen with Whisper on the GPU. If you moved it to CPU, cap `cpu_threads` and raise VCV's ASIO buffer |
 
 ---
-
-
 
 ## Repository layout
 
 ```
 C:\theoracle\
-  README.md                  this file
+  README.md                  this file - installing it
+  INTEGRATION.md             wiring the mixer, VCV Rack, screen and monitors
   TheOracleSystem.md         the design document - why every choice was made
   config.yaml                every tunable setting          (in git)
   .env                       OLLAMA_API_KEY                 (NEVER in git)
@@ -1626,7 +1667,9 @@ C:\theoracle\
   scripts/
     setup-shell.sh           TD_PYTHON and PATH for a new terminal - source it first
     check_env.py             diagnostics
+    audio_devices.py         name -> PortAudio index, host APIs and all
     ollamaweb.py             web search smoke test
+    smoke_test.py            the whole chain, once (Step 13)
   td/
     theoracle.toe            the TouchDesigner project
     scripts/ws_callbacks.py

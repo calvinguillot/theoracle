@@ -273,28 +273,35 @@ def check_audio(cfg: dict) -> None:
         record(BAD, "query_devices", f"{type(e).__name__}: {e}")
         return
 
-    print("       Copy a distinctive fragment of a name into config.yaml audio.*_device\n")
-    for i, d in enumerate(devices):
-        kind = []
-        if d["max_input_channels"]:
-            kind.append(f"in:{d['max_input_channels']}")
-        if d["max_output_channels"]:
-            kind.append(f"out:{d['max_output_channels']}")
-        print(f"       {i:3d}  {d['name'][:52]:52s} {','.join(kind)}")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import audio_devices as ad
+
+    print("       Copy a distinctive fragment of a name into config.yaml audio.*_device.")
+    print("       Windows lists each card once per host API — that is why names repeat.\n")
+    for i in range(len(devices)):
+        print("       " + ad.describe(i))
 
     audio = cfg.get("audio", {}) or {}
-    names = [d["name"] for d in devices]
-    for key in ("input_device", "output_device"):
+    for key, kind in (("input_device", "input"), ("output_device", "output")):
         want = audio.get(key)
         if not want:
+            record(WARN, key, "not set — the system default will be used")
             continue
-        hits = [n for n in names if want.lower() in n.lower()]
-        if len(hits) == 1:
-            record(OK, key, f'"{want}" → {hits[0]}')
-        elif not hits:
-            record(BAD, key, f'"{want}" matches nothing above')
-        else:
-            record(BAD, key, f'"{want}" matches {len(hits)} devices — make it more specific')
+        try:
+            index, note = ad.resolve_reported(want, kind)
+        except ad.DeviceError as e:
+            record(BAD, key, str(e))
+            continue
+        record(OK, key, note.strip())
+        try:
+            if kind == "input":
+                sd.check_input_settings(device=index, channels=1, samplerate=16000)
+            else:
+                sd.check_output_settings(device=index, channels=2, samplerate=48000)
+            record(OK, f"  {key} open", "the driver accepts these settings")
+        except Exception as e:
+            record(BAD, f"  {key} open", f"{type(e).__name__}: {e} "
+                                         "— something else may hold this device (ASIO is exclusive)")
 
 
 def check_stories() -> None:

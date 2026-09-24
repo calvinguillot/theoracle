@@ -1,21 +1,25 @@
 # The Oracle — system architecture
 
-Design document for `theoracle`, an interactive voice installation.
-Last revised 2026-09-20.
+How the piece works and why it is built this way. Last revised 2026-09-22.
 
-For installation instructions, see [`README.md`](README.md). For the Oracle's voice and the
-world it speaks from, see [`stories/instructions.md`](stories/instructions.md) and
-[`stories/world.md`](stories/world.md). The sources behind the piece are in [`stories/lineage.md`](stories/lineage.md).
+This is the **overview**. It does not tell you how to install anything or how to wire anything up:
 
-This document records not just what the system does but **why each choice was made and what it
-costs** — the reasoning is the point, since most of it is only obvious once you have hit the
-problem it avoids.
+| For | Read |
+| --- | --- |
+| Installing the software, step by step | [`README.md`](README.md) |
+| Wiring the mixer, VCV Rack, screen and monitors | [`INTEGRATION.md`](INTEGRATION.md) |
+| The Oracle's voice and what it refuses | [`stories/instructions.md`](stories/instructions.md) |
+| The world, and how it answers | [`stories/world.md`](stories/world.md) |
+| The references behind the piece | [`stories/lineage.md`](stories/lineage.md) |
+
+What this document is for is the **reasoning** — what each choice costs, and what it is protecting
+against. Most of it is only obvious once you have hit the problem it avoids.
 
 ---
 
 ## Contents
 
-**The design**
+**The shape of it**
 - [System overview](#system-overview)
 - [The Oracle: what changed](#the-oracle-what-changed)
 - [Target machine and stack](#target-machine-and-stack)
@@ -27,16 +31,13 @@ problem it avoids.
 - [Stage 4 — Guardrails and prompt injection defense](#stage-4--guardrails-and-prompt-injection-defense)
 - [Stage 5 — Text to speech with Piper](#stage-5--text-to-speech-with-piper)
 
-**Integration**
+**How the parts meet**
 - [The audio file lifecycle](#the-audio-file-lifecycle)
-- [Audio hardware and signal flow](#audio-hardware-and-signal-flow)
+- [Audio hardware — the constraints that shape it](#audio-hardware--the-constraints-that-shape-it)
 - [TouchDesigner integration](#touchdesigner-integration)
 - [Latency budget](#latency-budget)
 
-**Building it**
-- [Environment and dependencies](#environment-and-dependencies)
-- [Setup runbook](#setup-runbook)
-- [Project layout and configuration](#project-layout-and-configuration)
+**Making it**
 - [Build plan](#build-plan)
 - [Risks and open decisions](#risks-and-open-decisions)
 
@@ -220,6 +221,8 @@ Raw material exists only while someone is standing there.
 | `responses/<n>_raw.json` | A web result as it came back |
 | `responses/<n>_clean.txt` | The same result, cleaned and cut to one paragraph — the only version the model sees |
 | `audio/` | Generated WAVs |
+
+Engine logs (`logs/`) are separate and technical — timestamps, detected language, guard verdicts, per-stage milliseconds, errors, no visitor speech. They can be kept indefinitely.
 
 **Nothing from the web outlives the visit.** Only its kind — `weather`, `news`, `self: found`, `self: nothing` — survives into `history/`. The single exception is an in-memory cache of *world* results, so two weather readings ten minutes apart do not search twice; it never touches disk, expires after `cache_minutes`, and clears on restart. **Self-search results are never cached**: a result about a person is used once, for the person who asked.
 
@@ -733,103 +736,23 @@ Write WAVs to a dedicated folder — `runtime/audio/`, not a temp directory Wind
 
 At 22 kHz mono 16-bit, a 20-second story is about 880 KB. Even keeping a full day's worth is trivial — the reason to delete is privacy, not disk space, and that is worth deciding alongside the transcript-logging question below.
 
-## Audio hardware and signal flow
+## Audio hardware — the constraints that shape it
 
-One constraint decides the layout: **on Windows, only one application can own the CQ-12T at a time.** Allen & Heath require their ASIO driver for multitrack USB, ASIO is single-client, and A&H state plainly that the WDM driver cannot remap outputs to specific USB channels — so WDM gives you the main stereo pair and nothing more.
+The wiring, the patch sheet and the commissioning steps live in **`INTEGRATION.md`**. What belongs here is why it is shaped the way it is.
 
-Three programs want audio. **Give the mixer to VCV Rack**, because it is the only one needing discrete outputs per monitor. The voice does not touch the mixer at all.
+**One USB interface, three programs that want it.** On Windows only one application can own the CQ-12T at a time: Allen & Heath require their ASIO driver for multitrack, ASIO is single-client, and their WDM driver cannot remap outputs to specific USB channels. VCV Rack gets it, because it is the only one of the three needing separate outputs per monitor. The voice and the microphone reach the mixer as ordinary audio instead.
 
-```mermaid
-flowchart LR
-  MIC[Microphone] --> CH1[CQ ch1<br/>HPF gate comp]
-  CH1 --> AUX[CQ Out 5<br/>mic only]
-  AUX --> DONG[USB dongle]
-  DONG --> PY[Python<br/>Whisper]
-  PY --> TD[TouchDesigner]
-  TD -->|HDMI| SCR[Centre screen<br/>+ its speakers]
-  VCV[VCV Rack Pro] -->|USB ASIO| RET[CQ USB<br/>returns 1-4]
-  RET --> MIX[CQ Out 1-4]
-  MIX --> SPK[4 monitors<br/>around the room]
-  TD -.OSC.-> VCV
-```
+**The microphone goes through the mixer before the computer sees it.** The channel strip's high-pass, gate and compressor do more for speech-recognition accuracy than any software setting. The gate in particular is what stops Whisper inventing words out of room tone — a better fix than the software `no_speech_prob` check, which becomes the second line of defence rather than the first.
 
-The CQ-12T has 10 mic/line inputs, a stereo TRS input, 2 XLR main outs, 6 TRS monitor outs and a 16×16 USB interface at 48/96 kHz — considerably more than this needs, which is comfortable rather than wasteful. [CQ-12T specs](https://www.allen-heath.com/hardware/cq/cq-12t/)
+**The mic feed to the engine is a mix containing channel 1 only.** Neither the voice nor VCV's output is in it, so the installation physically cannot transcribe itself even if the software's mic-gating logic fails. A hardware guarantee beats a software one.
 
-### The voice goes out HDMI
+**The voice plays from two places at once**, the centre screen over HDMI and the four monitors through the mixer, and those arrive at different times: HDMI audio runs 40–150 ms behind, being a different clock domain. Two copies of the same speech that far apart is a slap-back echo, not a chorus, and it wrecks intelligibility. The fix is the CQ's output delay — up to 682 ms per output socket — used to hold the four monitors back until they land with the screen. Measure the offset with a clap test rather than guessing it.
 
-This reverses my earlier recommendation, and the reasoning is worth keeping because the reversal is instructive.
-
-HDMI audio does not avoid latency — it **adds** 40–150 ms. What it avoids is the *echo*. The earlier design had the voice playing from the mixer and the screen simultaneously: two clock domains, two arrival times at the visitor, an audible slap-back from the centre of the room. That was a real problem. Playing from one place only dissolves it completely, and the added latency is irrelevant inside a response that already takes four to six seconds.
-
-What the change buys:
-
-| Gain | Detail |
-| --- | --- |
-| No USB DAC | One less device and cable in the rig |
-| Correct localisation | The voice comes from the screen — the thing talking to you is in front of you, while VCV's bed moves around the four surrounds |
-| Two mixer outputs freed | Out 6 and the mains are now spare |
-| Analysis unaffected | TouchDesigner still plays the file, so the Audio File In CHOP and its envelope still drive the visuals |
-
-Two operational cautions. Windows drops the HDMI audio endpoint when the display sleeps or is re-plugged, and TouchDesigner then needs its output device re-selected — **disable display sleep and USB selective suspend on the show machine.** And the screen's built-in speakers are small and mid-heavy; audition the Finnish voice through them specifically, because that is what every visitor actually hears. If they disappoint, a small powered speaker behind the screen on CQ Out 5 is the fallback, and the echo problem does not return as long as only one of the two is ever active.
-
-### Why the mic goes through the mixer first
-
-**Routing the mic through the CQ before Python sees it is the single biggest accuracy win available.** The channel strip gives a proper preamp, a high-pass filter, a noise gate and a compressor, in hardware, before Whisper touches the signal.
-
-- **High-pass at 80–120 Hz** removes rumble and footsteps that Whisper otherwise tries to interpret.
-- **The gate** kills room tone between visitors. This is what stops Whisper hallucinating "Kiitos." into silence — a better fix than the software `no_speech_prob` check, which becomes the second line of defence rather than the first.
-- **The compressor** evens out the visitor who leans in and the one who stands back.
-
-A stand mic that visitors are encouraged to speak closely into is the best case for all of this: high signal-to-noise, consistent distance, proximity effect giving body to quiet speakers. With a quiet soundscape you can set the gate low and compress gently (3:1, a few dB). Set it with the monitors at show level, not in a silent room, and add a windscreen — close speech produces plosives, and a popped P is a word Whisper loses.
-
-### Getting the mic back to Python
-
-VCV owns the USB, so the mic cannot return that way. Assign **TRS Out 5** as a mix containing channel 1 only, into a cheap class-compliant USB input that Python owns exclusively.
-
-That aux mix contains **only the microphone**. Neither the voice nor VCV's output is in it, so the installation physically cannot transcribe itself even if the software's mic-gating logic fails. A hardware guarantee beats a software one.
-
-Never route the microphone to any monitor mix. There is no artistic reason to amplify the visitor, and it puts an open mic a few metres from four speakers.
-
-### Patch sheet
-
-| CQ connector | Carries | Routed to |
-| --- | --- | --- |
-| Input 1 (XLR) | Microphone | Out 5 only — never to the monitors |
-| USB returns 1–4 | VCV Rack generative audio | Out 1–4, one per monitor |
-| TRS Out 1–4 | Four monitors around the room | — |
-| TRS Out 5 | Mic-only feed | USB dongle → Python |
-| TRS Out 6, Main XLR | Spare | Recording, or a fallback centre speaker |
-
-Not on the mixer at all: the voice, which goes TouchDesigner → HDMI → the centre screen.
-
-### VCV Rack and TouchDesigner talking
-
-Audio and control are separate paths and should stay that way.
-
-| Path | Carries | How |
-| --- | --- | --- |
-| VCV → CQ | Generative audio, 4 discrete channels | USB ASIO, Audio-16 module |
-| TD → VCV | State, mood, duck level, `char_count` | OSC over localhost |
-| TD → screen | The voice | HDMI, direct |
-
-For the OSC side, use a module that maps OSC to CV — stoermelder's **OSC'elot** or Trowa's **cvOSCcv**. Send the same `state` and `mood` the visuals use, and VCV's patch becomes another instrument reading the piece's state machine.
-
-You said the soundscape is quiet enough not to need ducking, and with a close-talked mic that is probably right. I would still wire a **gentle** one — 3–6 dB, not a hard mute — on the `speaking` state, released on `playback_finished`. It costs one VCA and one OSC message, and it protects the Finnish consonants a quiet bed can still mask. Easy to set to zero; much less easy to add during install week.
-
-Derivative have a [tutorial on running VCV Rack with TouchDesigner](https://derivative.ca/community-post/tutorial/setting-audiovisual-performance-vcv-rack-and-touchdesigner/62724) covering the OSC side; note it routes audio between the two with VB-Audio Cable, which this design avoids by keeping the two signal paths physically separate.
-
-### If you'd rather not buy the USB dongle
-
-Two fallbacks, both with caveats worth knowing before relying on them:
-
-| Approach | How | Risk |
-| --- | --- | --- |
-| CQ's WDM input alongside VCV's ASIO output | Python opens the CQ's main stereo pair over WASAPI while VCV holds ASIO | May work, may not — A&H don't document simultaneous ASIO + WDM. Test it in Phase A; if it holds for four hours it holds |
-| Multi-client ASIO layer | ASIO Link Pro or Voicemeeter Potato owns the hardware and hands virtual devices to each app | Adds a moving part between the piece and its speakers. Fine for a studio, less so for something unattended for weeks |
-
-The dongle costs less than an hour of debugging either.
+**TouchDesigner still plays the file**, both to HDMI and to the mixer, which is what keeps its audio analysis driving the visuals from the real signal.
 
 ## TouchDesigner integration
+
+This section is the **protocol** — what the two programs say to each other. The cabling and the TouchDesigner operators that carry it are in [`INTEGRATION.md`](INTEGRATION.md); the first end-to-end test of it is Step 13 of the README.
 
 Moving playback into TouchDesigner simplifies this considerably. **WebSocket carries the whole session protocol; OSC carries only the per-frame numbers that need frame-rate updates.** Everything that used to be a `tts_*` channel — progress, amplitude, duration — now comes from TD's own Audio File In CHOP, which is both more accurate and less code.
 
@@ -948,491 +871,6 @@ Keep everything warm: load Whisper and run one dummy inference at startup, load 
 
 Instrument every stage from day one. Log per-stage milliseconds on every interaction and send them to TD too, so you can watch them during a rehearsal instead of guessing afterwards.
 
-## Environment and dependencies
-
-Your uv workflow is the right approach, and it resolves the tension in my earlier draft. I warned against putting CUDA packages in TouchDesigner's Python — but that warning was about installing into TD's own `site-packages`. Building a **separate venv whose base interpreter is TD's Python** is different and much safer: TD's installation is untouched, and the venv stays compatible with it.
-
-So: build on TD's Python, and still run the engine as its own process.
-
-| Use | Which Python | Why |
-| --- | --- | --- |
-| The voice engine | `.venv\Scripts\python.exe`, launched from a `.bat` | Separate process — a CUDA crash takes down the engine, not your visuals |
-| TD-side helper code | TD's Python, with the venv on `sys.path` | Light imports only: yaml, small utilities |
-| Never | importing `ctranslate2` or `onnxruntime` inside TD | Two CUDA consumers in one process on an 8 GB card, and one crash kills both |
-
-The venv is built on TD's Python so those two can share it, not so the models run inside TD. In practice TD needs almost nothing from it — the WebSocket DAT and Serial DAT are built in — but keeping the versions aligned costs nothing and leaves the door open.
-
-### One gotcha worth knowing first
-
-TouchDesigner ships its own NumPy. If you add a venv to TD's `sys.path` and that venv holds a different NumPy major version, TD can break in confusing ways. Pin NumPy in `pyproject.toml` to match what TD ships — check it in the textport with `import numpy; print(numpy.__version__)` before you install anything.
-
-### Setup
-
-Install the tools:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-winget install Git.Git
-```
-
-Find TD's Python. In a TD textport, check **both** values — you need the version, not just the path:
-
-```python
-import sys
-print(sys.executable)   # C:/Program Files/Derivative/TouchDesigner/bin/python.exe
-print(sys.version)      # pin requires-python to this exact minor version
-```
-
-Then, in a Git Bash shell (`"C:\Program Files\Git\bin\bash.exe" --login -i`), from the repo root at /c/theoracle:
-
-```bash
-export TD_PYTHON="C:/Program Files/Derivative/TouchDesigner/bin/python.exe"
-export UV_PYTHON_DOWNLOADS=never     # stops uv quietly fetching its own Python
-unset UV_PYTHON
-
-uv venv --python "$TD_PYTHON" && source .venv/Scripts/activate && uv sync
-```
-
-`UV_PYTHON_DOWNLOADS=never` is the line I'd add to your notes. Without it, if the path is wrong or the version constraint does not match, uv silently downloads its own CPython and builds a venv TD cannot use. You then spend an hour debugging imports that work in the terminal and fail in TD.
-
-**Pass the interpreter to `uv venv` directly — do not export it as `UV_PYTHON`.** This was an error in an earlier draft of this document, found in practice. `UV_PYTHON` is read by *every* uv command, and `uv pip` treats it as the environment to install **into**, overriding the activated `.venv`. Set globally, it points `uv pip install` at TouchDesigner's own `site-packages`; the only thing that stopped it was Windows refusing to write to Program Files. Never run the shell as administrator to get past that error. Keeping the path in a differently named variable (`TD_PYTHON`) that only `uv venv --python` reads makes TouchDesigner's folder unreachable by construction.
-
-### pyproject.toml
-
-```toml
-[project]
-name = "theoracle"
-version = "0.1.0"
-requires-python = "==3.11.*"        # match TD exactly
-dependencies = [
-  "piper-tts>=1.3",
-  "ollama>=0.6",
-  "python-dotenv>=1.0",
-  "faster-whisper",
-  "nvidia-cublas-cu12",
-  "nvidia-cudnn-cu12",
-  "sounddevice>=0.4.6",
-  "websockets>=12",
-  "python-osc>=1.8",
-  "pyyaml>=6",
-  "rank-bm25>=0.2.2",
-  "numpy==<match TD>",
-]
-
-[tool.uv]
-python-downloads = "never"
-```
-
-### faster-whisper and the CUDA libraries
-
-Current `ctranslate2` needs **CUDA 12 with cuDNN 9**, and on Windows those DLLs are not bundled. Two ways through:
-
-| Approach | How | Note |
-| --- | --- | --- |
-| DLLs on PATH | Take the NVIDIA libraries from Purfview's `whisper-standalone-win` release and put them on PATH | What the faster-whisper README recommends for Windows |
-| NVIDIA packages in the venv | `uv add faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12` | Keeps everything inside `.venv` and in the lockfile; add their `bin` folders to PATH in `run.bat` |
-
-If you hit the cuDNN 8 version of this problem, `uv add "ctranslate2==4.4.0"` pins back to the older pairing. [faster-whisper README](https://github.com/SYSTRAN/faster-whisper)
-
-**Use `uv add`, never `uv pip install`.** `uv add` writes to `pyproject.toml` and the lockfile. `uv pip install` does not — and `uv sync` is exact by default, so it *removes* anything the lockfile does not list. A package installed with `uv pip` vanishes the next time anyone syncs. An earlier draft of this document recommended `uv pip` for faster-whisper; that was wrong.
-
-### Getting the venv into TouchDesigner
-
-Recent builds ship an official palette component, **tdPyEnvManager**, which adds an external environment to TD's Python path and can activate it automatically at startup. It reads a `TDPyEnvManagerContext.yaml` or a `pyproject.toml` section, so it fits your uv setup directly. It requires the venv's Python version to match TD's — which is exactly what `uv venv --python "$TD_PYTHON"` guarantees. [tdPyEnvManager](https://derivative.ca/UserGuide/Palette:tdPyEnvManager)
-
-Prefer it over hand-appending to `sys.path` in an execute DAT: it survives project saves, it is visible in the palette rather than buried in a script, and whoever reopens this file in two years can see what it depends on.
-
-### Launching the engine
-
-```bat
-@echo off
-cd /d "%~dp0"
-.venv\Scripts\python.exe -m engine
-```
-
-Note that `OLLAMA_KEEP_ALIVE` does **not** belong in this file. It is read by the Ollama *server*, not by your client, so setting it here does nothing. Set it as a Windows user environment variable and restart Ollama — or, more reliably, have the engine pin the model itself at startup with a warm-up call to Ollama's native API carrying `"keep_alive": -1`. Do both; the warm-up call also gets the first-token cost out of the way before a visitor arrives.
-
-## Setup runbook
-
-One repository, `theoracle`, holding everything — engine, stories, voices, TD project, scripts. Steps run in order; several later ones fail confusingly if an earlier one was skipped. Step 7 pulls `qwen3.5:4b` and checks that thinking is off.
-
-Every command below says which shell it runs in and which directory you are in. Unless stated otherwise, you are in `/c/theoracle` in Git Bash.
-
-### Step 0 — Where the repo lives
-
-**`C:\theoracle`** — straight off the root, not in Documents or OneDrive. Three reasons, all of which cost an evening if ignored:
-
-- **No spaces in the path.** The uv and bash workflow crosses quoting boundaries repeatedly; `C:\Users\Alejandro\My Documents\...` will bite you.
-- **No cloud sync.** OneDrive syncing a 2 GB model cache and live WAV files during a show is a real failure mode.
-- **Short path.** Windows path-length limits are still real inside deep `site-packages` trees.
-
-In Git Bash that directory is `/c/theoracle`.
-
-### Step 1 — Tools
-
-PowerShell, anywhere:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-winget install Git.Git
-nvidia-smi
-```
-
-`nvidia-smi` prints a CUDA version top right. Below 12, update the driver before going further.
-
-### Step 2 — Read three values out of TouchDesigner
-
-TD textport:
-
-```python
-import sys, numpy
-print(sys.executable)        # -> TD_PYTHON
-print(sys.version)           # -> requires-python
-print(numpy.__version__)     # -> the NumPy pin
-```
-
-Write all three down. Everything below depends on them, and guessing here is the most common way this setup goes wrong.
-
-### Step 3 — Create the repository and its folders
-
-Open Git Bash: `"C:\Program Files\Git\bin\bash.exe" --login -i`
-
-```bash
-mkdir -p /c/theoracle
-cd /c/theoracle
-git init
-
-mkdir -p engine stories voices runtime/audio logs/sessions td/scripts scripts
-touch engine/__init__.py
-```
-
-That gives you the whole tree in one command. What each folder is for:
-
-| Path | Holds | In git? |
-| --- | --- | --- |
-| `engine/` | The Python package — all modules from the layout section | yes |
-| `stories/` | `instructions.md`, `world.md`, `stories.md` | yes |
-| `voices/` | Piper `.onnx` + `.onnx.json` pairs | yes — see below |
-| `runtime/audio/` | Generated WAVs, swept at startup | no |
-| `logs/sessions/` | One JSONL per day | no |
-| `td/` | `theoracle.toe` and its scripts | yes |
-| `scripts/` | `check_env.py`, `setup-shell.sh`, fetch helpers | yes |
-| `.venv/` | Created by uv in step 5 | no |
-
-Now the `.gitignore`, before the first commit — much easier than untracking things later:
-
-```bash
-cat > .gitignore <<'EOF'
-.venv/
-__pycache__/
-*.pyc
-runtime/
-logs/
-config.local.yaml
-td/*.toe.[0-9]*
-.env
-EOF
-```
-
-`td/*.toe.[0-9]*` catches TouchDesigner's automatic backup files, which otherwise pile up in every commit.
-
-And the shell helper, so you stop retyping the exports:
-
-```bash
-cat > scripts/setup-shell.sh <<'EOF'
-export PATH="$HOME/.local/bin:$PATH"
-export TD_PYTHON="C:/Program Files/Derivative/TouchDesigner/bin/python.exe"
-export UV_PYTHON_DOWNLOADS=never
-unset UV_PYTHON        # never set it: uv pip would install into TouchDesigner
-EOF
-```
-
-Edit that path if step 2 printed something different.
-
-### Step 4 — pyproject.toml
-
-In `/c/theoracle`, create `pyproject.toml` with `requires-python` and the NumPy pin set to exactly what step 2 printed:
-
-```toml
-[project]
-name = "theoracle"
-version = "0.1.0"
-requires-python = "==3.11.*"        # match TD exactly
-dependencies = [
-  "piper-tts>=1.3",
-  "ollama>=0.6",
-  "sounddevice>=0.4.6",
-  "websockets>=12",
-  "python-osc>=1.8",
-  "pyyaml>=6",
-  "rank-bm25>=0.2.2",
-  "numpy==<match TD>",
-]
-
-[tool.uv]
-python-downloads = "never"
-```
-
-### Step 5 — The environment
-
-Git Bash, in `/c/theoracle`:
-
-```bash
-source scripts/setup-shell.sh
-"$TD_PYTHON" --version              # must match Step 2
-
-uv venv --python "$TD_PYTHON" && source .venv/Scripts/activate && uv sync
-
-python -c "import sys; print(sys.version)"
-```
-
-**Hard stop:** that last line must print the same version as step 2. If it differs, uv built the venv on its own Python — `rm -rf .venv`, fix `TD_PYTHON` in `setup-shell.sh`, start the step again. Do not continue past a mismatch; everything downstream will work in the terminal and fail in TouchDesigner.
-
-`.venv` lands at `C:\theoracle\.venv`, which is the path tdPyEnvManager wants in step 9.
-
-### Step 6 — faster-whisper and the CUDA libraries
-
-Same shell, venv active:
-
-```bash
-uv add faster-whisper nvidia-cublas-cu12 nvidia-cudnn-cu12
-python -c "import faster_whisper, sys; print(sys.prefix)"   # must end in .venv
-```
-
-**Check this in isolation before writing any engine code** — it is the step that fails:
-
-```bash
-python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3-turbo', device='cuda', compute_type='int8'); print('loaded ok')"
-```
-
-A `cudnn64_9.dll` or `cublas64_12.dll` error means the DLLs are not on PATH — add the venv's `nvidia` package directories to PATH in `run.bat`, or use Purfview's `whisper-standalone-win` library archive instead. On cuDNN 8, pin back with `uv add "ctranslate2==4.4.0"`.
-
-The first run downloads \~1.6 GB to the Hugging Face cache. Do this on your own network, not the gallery's.
-
-`uv add`, not `uv pip install`: the packages land in `pyproject.toml` and the lockfile, so `uv sync` keeps them instead of removing them, and a new machine reproduces them. If the first line of uv's output ever names `C:\Program Files\Derivative\TouchDesigner`, stop and `unset UV_PYTHON` — and never run as administrator to get past "Access is denied".
-
-### Step 7 — Ollama and qwen3.5:4b
-
-Any shell:
-
-```bash
-ollama pull qwen3.5:4b              # ~3.4 GB; update Ollama first if it refuses
-ollama list
-ollama run qwen3.5:4b --think=false "Kerro yhden lauseen tarina merestä."
-curl http://localhost:11434/api/tags
-```
-
-**Check the reply has no reasoning block in front of it.** Qwen3.5 thinks by default; `--think=false` is the CLI switch, and the engine passes `think=False` on every request. If `--think` is not recognised, Ollama is too old for this model — reinstall from ollama.com/download.
-
-Then set two Windows user environment variables and restart Ollama: `OLLAMA_KEEP_ALIVE=-1` and `OLLAMA_FLASH_ATTENTION=1`. The context window needs no Modelfile — the engine sends `num_ctx: 16384` with each request through the native `ollama` client.
-
-Read that Finnish reply carefully. If it sounds translated rather than written, that is your Phase 3 finding arriving early, and useful to know now.
-
-### Step 8 — Piper voices into `voices/`
-
-Git Bash, in `/c/theoracle`, venv active:
-
-```bash
-python -m piper.download_voices fi_FI-harri-medium --data-dir voices
-python -m piper.download_voices sv_SE-alma-medium  --data-dir voices
-python -m piper.download_voices en_GB-alba-medium  --data-dir voices
-# ...and the other seven - see the README's Languages table
-ls -la voices/
-```
-
-Confirm the flag name with `python -m piper.download_voices --help`; you want the pairs landing in `C:\theoracle\voices`, not the current directory.
-
-**Check:** synthesise one sentence per language and listen. This is the Finnish-voice audition — better to be disappointed now than in Phase 2.
-
-About committing them: three voices is roughly 200 MB. Commit them if this repo stays local, because a show machine that needs the internet to speak goes silent when the gallery wifi drops. If you push to GitHub, use Git LFS for `voices/*.onnx` rather than a plain commit.
-
-### Step 9 — TouchDesigner
-
-Save the project as `C:\theoracle\td\theoracle.toe`. Add **tdPyEnvManager** from the palette and point its install path at `C:\theoracle\.venv`. Confirm a light import works from the textport — `import yaml` is enough. Heavy imports stay out of TD; this only proves the path is right.
-
-### Step 10 — Going offline
-
-Create `C:\theoracle\run.bat`:
-
-```bat
-@echo off
-cd /d "%~dp0"
-set HF_HUB_OFFLINE=1
-.venv\Scripts\python.exe -m engine
-```
-
-With the model and voices cached, `HF_HUB_OFFLINE=1` stops a no-network startup hanging for a minute while Hugging Face times out — which on an opening morning looks exactly like a crash.
-
-### Step 11 — `scripts/check_env.py`
-
-Write this before anything else, and run it whenever something behaves oddly:
-
-| Checks | Prints |
-| --- | --- |
-| Python version | matches TD's |
-| CUDA visibility | device name, free VRAM |
-| Whisper load at `int8` | seconds to load, VRAM after |
-| Ollama reachable | models listed, tokens/sec on a short prompt |
-| Piper voices in `voices/` | each pair found, sample rate |
-| Audio devices | every input and output, by name |
-| Free VRAM with TD open | the number your 3 GB reserve depends on |
-
-The last row is the one you will come back to — run it with the real scene open and you have the measurement all the budgeting in this document has been assuming.
-
-The audio-devices row saves its own afternoon: it prints the exact substrings to paste into `config.yaml` for the DAC and the mic dongle, rather than guessing what Windows calls them this week.
-
-### Step 12 — First commit
-
-```bash
-cd /c/theoracle
-git add -A
-git status          # check .venv, runtime/ and logs/ are absent
-git commit -m "theoracle: project skeleton, environment, voices"
-```
-
-Commit here, before any engine code. This snapshot is the working environment, and having it isolated means that when something breaks in week three you can tell whether the environment or your code changed.
-
-For the exhibition, have TD launch this itself at startup and restart it if it dies, rather than relying on someone remembering to double-click two things in the right order. A gallery technician opening the piece on a Tuesday morning should only have to open the .toe file.
-
-## Project layout and configuration
-
-```text
-C:\theoracle\
-  config.yaml              # every tunable, nothing hardcoded
-  pyproject.toml           # deps, requires-python pinned to TD's
-  run.bat                  # launches the engine
-  .gitignore
-  engine/
-    __init__.py
-    __main__.py            # state machine, the only long-lived loop
-    audio_in.py            # ring buffer, Silero VAD, endpointing
-    stt.py                 # faster-whisper wrapper + confidence gate
-    guard.py               # input screen, schema check, content check
-    llm.py                 # Ollama client, JSON schema, one retry
-    websearch.py           # ollama.web_search, sanitise, timeout
-    corpus.py              # instructions/world/stories loading
-    tts.py                 # Piper voices, WAV write, measure, publish
-    bridge.py              # WebSocket server + OSC sender
-    prompts.py             # system prompt templates per language
-    schema.py              # the response JSON schema
-  stories/
-    instructions.md  world.md  stories.md
-  voices/
-    fi_FI-harri-medium.onnx (+ .json)   # ten voices, one per language
-    sv_SE-alma-medium.onnx  (+ .json)
-    en_GB-alba-medium.onnx  (+ .json)   # ...and seven more
-  scripts/
-    setup-shell.sh         # TD_PYTHON + PATH; source it in every new terminal
-    check_env.py           # the diagnostic from the runbook
-  td/
-    theoracle.toe
-    scripts/ws_callbacks.py
-  runtime/
-    audio/                 # generated WAVs, swept at startup  (gitignored)
-  logs/
-    sessions/YYYY-MM-DD.jsonl                                  (gitignored)
-  .venv/                                                       (gitignored)
-```
-
-Everything the piece needs is inside `C:\theoracle` — code, stories, voices, TD project and scripts. The only things living outside it are Ollama's model store and the Hugging Face cache, both of which are machine-level and shared.
-
-`guard.py` as pure functions is a deliberate choice: it is the part you most want a test file for, and testing it should not require a microphone, a GPU or TouchDesigner.
-
-### Config shape
-
-```yaml
-audio:
-  input_device: "USB Audio CODEC"    # the dongle on CQ Out 5, substring match
-  output_device: "HDMI"              # the centre screen's own speakers
-  silence_ms: 800
-  max_utterance_s: 20
-  speech_start_timeout_s: 8
-  min_speech_s: 0.5
-  preroll_s: 2.0
-stt:
-  model: large-v3-turbo
-  device: cuda                 # cuda | cpu  (Plan B)
-  compute_type: int8           # settled - keeps the 3 GB reserve
-  min_confidence: 0.5
-  allowed_languages: [fi, sv, en, es, de, et, it, pt, ja, zh]
-  language_lock: sticky        # sticky | per_turn | fixed
-  switch_confidence: 0.75
-  switch_min_words: 3
-  switch_min_speech_s: 1.5
-  default_language: fi
-llm:
-  host: http://localhost:11434
-  model: qwen3.5:4b
-  think: false                 # MUST stay false - on by default in Qwen3.5
-  num_ctx: 16384               # MUST be set - default 4096 cuts the instructions
-  top_p: 0.8
-  top_k: 20
-  presence_penalty: 1.5
-  think: false
-  num_predict: 150
-  temperature: 0.8
-  timeout_s: 15
-  max_retries: 1
-websearch:
-  enabled: true                # NOTE: this one leaves the laptop
-  timeout_s: 3                 # hard cap; a slow search is skipped, never waited on
-  max_chars: 2000
-  max_per_visit: 2
-  cache_minutes: 30            # world topics only, in memory only
-  world_topics: [weather, tide, date, season, city, trade, place, news]
-  self_search:
-    enabled: true
-    require_consent: true      # MUST stay true
-    offer_once: true
-    narrow_questions: 1
-    cache: false               # MUST stay false
-    drop_categories: [criminal, health, death_notice, home_address, financial]
-  third_party_search: false    # MUST stay false
-conversation:
-  max_turns: 8
-  max_silence_s: 12
-  end_on_sensor_clear_s: 5
-  context_turns: 6
-tts:
-  voices: {fi: fi_FI-harri-medium, sv: sv_SE-alma-medium, en: en_GB-alba-medium,
-           es: es_MX-ald-medium, de: de_DE-thorsten-high, et: et_EE-news-medium,
-           it: it_IT-paola-medium, pt: pt_BR-cadu-medium,
-           ja: ja_JP-hi_fi_captain-medium, zh: zh_CN-huayan-medium}
-  length_scale: 1.0
-  output_dir: runtime/audio
-  max_duration_s: 45
-  keep_last: 20
-guard:
-  max_input_chars: 300
-  max_output_chars: 600
-  cooldown_s: 2.0
-  max_per_minute: 12
-bridge:
-  ws_host: 127.0.0.1
-  ws_port: 8765
-  ws_token: "change-me"
-  osc_td_port: 9001            # engine -> TouchDesigner
-logging:
-  store_transcripts: true      # raw, in the session dir, deleted at visit end
-  history_dir: history
-  sanitize_on_end: true        # MUST stay true in an exhibition
-  keep_raw_sessions: false     # true only while debugging
-```
-
-TouchDesigner holds the OSC path to VCV Rack (port 9002 by default) rather than Python. The engine reports state; TD decides what the generative bed does with it, which keeps the artistic mapping in the patch where you can change it live.
-
-Match audio devices by name substring rather than index. Indices reshuffle when USB devices are replugged; names survive.
-
-### Logging
-
-Two separate streams, and the distinction matters.
-
-**Engine logs** (`logs/`) are technical: timestamps, detected language, guard verdicts, per-stage milliseconds, errors. No visitor speech. This is the debugging record and it can be kept indefinitely.
-
-**Visit records** follow the lifecycle in [The data lifecycle](#the-data-lifecycle): raw material lives in the session directory for the length of the visit, then is compacted, sanitised into `history/`, and the raw directory is deleted.
-
-Names spoken into a microphone and written to disk are personal data under GDPR from the moment they land. The design is defensible because retention is minutes and sanitisation is automatic — and it stops being defensible the moment `sanitize_on_end` or `keep_raw_sessions` is flipped for debugging and forgotten. Post a sign either way.
-
 ## Build plan
 
 Eight phases. Two ordering rules: **prove the audio hardware before any software**, and **prove the TouchDesigner plumbing with a fixed WAV before any model exists.** If the mixer routing works and the file handshake works, every later problem is a model problem rather than an integration mystery.
@@ -1517,4 +955,5 @@ None of them block Phase A, which is cabling and mixer routing, or Phase 0, whic
 
 *This document is the reasoning behind `theoracle`. When a decision here turns out to be wrong in
 rehearsal, change it here too — a design document that stops matching the build is worse than none,
-because the next person trusts it.*
+because the next person trusts it. Installation steps belong in `README.md` and wiring in
+`INTEGRATION.md`; keeping them out of here is what stops this file going stale.*

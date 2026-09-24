@@ -3,3 +3,9 @@ python3 matrix_osc_receiver_nodeps.py
 
 sudo pkill -9 -f matrix_osc_receiver_nodeps.py
 
+independent light test: python3 ~/matrix_blink_test.py
+
+sudo pkill -9 -f matrix_blink_test.py
+
+ip address pi 1: 192.168.60.2
+ip address pi 2: 192.168.60.3

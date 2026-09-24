@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+
+import RPi.GPIO as GPIO
+import threading
+import time
+
+COL_PINS = [12, 16, 18, 22, 32, 37]   # physical BOARD pins
+ROW_PINS = [33, 31, 29, 15, 13, 11]   # physical BOARD pins
+
+GPIO.setmode(GPIO.BOARD)
+
+for pin in COL_PINS + ROW_PINS:
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.LOW)
+
+matrix_state = [[0] * 6 for _ in range(6)]
+matrix_lock = threading.Lock()
+
+
+def scan_loop():
+    while True:
+        with matrix_lock:
+            snapshot = [row[:] for row in matrix_state]
+
+        for r_idx, row_pin in enumerate(ROW_PINS):
+            GPIO.output(row_pin, GPIO.HIGH)
+
+            for c_idx, col_pin in enumerate(COL_PINS):
+                GPIO.output(
+                    col_pin,
+                    GPIO.HIGH if snapshot[r_idx][c_idx] else GPIO.LOW
+                )
+
+            time.sleep(0.002)
+
+            GPIO.output(row_pin, GPIO.LOW)
+
+            for col_pin in COL_PINS:
+                GPIO.output(col_pin, GPIO.LOW)
+
+
+def set_all(value):
+    with matrix_lock:
+        for r in range(6):
+            for c in range(6):
+                matrix_state[r][c] = value
+
+
+def main():
+    threading.Thread(target=scan_loop, daemon=True).start()
+
+    try:
+        while True:
+            print("ALL ON", flush=True)
+            set_all(1)
+            time.sleep(1)
+
+            print("ALL OFF", flush=True)
+            set_all(0)
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        print("\nStopping.")
+
+    finally:
+        GPIO.cleanup()
+
+
+if __name__ == "__main__":
+    main()
