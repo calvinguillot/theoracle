@@ -2,6 +2,7 @@
 
     python -m engine            # the piece
     python -m engine --keyboard # the same loop, typing instead of speaking
+    python -m engine --no-synth # without opening the soundscape
 
 Ten states, and the whole design is in which transitions do not exist.
 
@@ -45,6 +46,7 @@ from engine.journal import Journal, sweep    # noqa: E402
 from engine.llm import OracleError, Turn, Visit, warm   # noqa: E402
 from engine.schema import Reply              # noqa: E402
 from engine import websearch                 # noqa: E402
+from engine import synth as soundscape        # noqa: E402
 
 
 STATS = Stats()
@@ -146,6 +148,7 @@ class Engine:
         visit = self.visit
         self.stats.health = {
             "TouchDesigner": bool(self.bridge.clients),
+            "soundscape": bool(self.bridge.synths),
             "microphone": self.mic.describe().split("  ")[-1] if self.mic else False,
             "model": self.cfg.get("llm.model", "?"),
             "voices": f"{len(self.cfg.section('tts').get('voices', {}))}",
@@ -692,15 +695,19 @@ class Engine:
             await self.turn(typed=line)
 
 
-async def run(keyboard: bool = False) -> None:
+async def run(keyboard: bool = False, synth: bool = True) -> None:
     cfg = load()
     engine = Engine(cfg, keyboard=keyboard)
     await engine.prepare()
+    launcher = soundscape.Launcher(cfg, engine.bridge, log) if synth else None
 
     async with engine.bridge.serve():
         await engine.bridge.set_state("idle")
         tasks = [asyncio.create_task(engine.watch_for_departure()),
-                 asyncio.create_task(_tick(engine))]
+                 asyncio.create_task(_tick(engine)),
+                 asyncio.create_task(soundscape.feed(engine.bridge, engine))]
+        if launcher is not None:
+            tasks.append(asyncio.create_task(launcher.run()))
         if engine.mic is not None:
             tasks.append(asyncio.create_task(meter(engine.bridge, engine.mic)))
         if keyboard:
@@ -716,6 +723,8 @@ async def run(keyboard: bool = False) -> None:
             engine._close_visit()
             if engine.mic is not None:
                 engine.mic.stop()
+            if launcher is not None:
+                launcher.stop()
 
 
 async def _tick(engine: Engine) -> None:
@@ -735,7 +744,8 @@ async def _enter_triggers(engine: Engine) -> None:
 
 def main() -> None:
     try:
-        asyncio.run(run(keyboard="--keyboard" in sys.argv))
+        asyncio.run(run(keyboard="--keyboard" in sys.argv,
+                        synth="--no-synth" not in sys.argv))
     except KeyboardInterrupt:
         print("\n  stopped")
 

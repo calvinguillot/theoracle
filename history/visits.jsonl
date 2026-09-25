@@ -10,3 +10,5 @@
 {"session": "8decacdfc4bb45b2bba9a584bf652466", "at": "2026-09-24T16:55:55+00:00", "seconds": 155.6, "turns": 9, "languages": ["en", "es"], "blocked": 0, "rejected": 0, "errors": []}
 {"session": "5ddb3389d1804bdcb78c7eb0a337d123", "at": "2026-09-24T23:14:48+00:00", "seconds": 95.7, "turns": 4, "languages": ["es"], "blocked": 0, "rejected": 0, "errors": []}
 {"session": "a714e59e66334aad90055a8a9a9fa52c", "at": "2026-09-24T23:16:23+00:00", "seconds": 86.5, "turns": 3, "languages": ["en"], "blocked": 0, "rejected": 3, "errors": []}
+{"session": "f0806042ed3b4d52abdabd0b966f584c", "at": "2026-09-25T06:11:50+00:00", "seconds": 100.7, "turns": 4, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "dc6016c37b0c49b598ca608508e748c6", "at": "2026-09-25T06:30:22+00:00", "seconds": 65.7, "turns": 3, "languages": ["fi", "en"], "blocked": 0, "rejected": 2, "errors": []}

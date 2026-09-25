@@ -7,20 +7,17 @@
 <!--
   theoracle — granular soundscape, with its own editor.
 
-  Served by TouchDesigner's Web Server DAT (td_synth_callbacks.py), opened in
-  Chrome with start_synth.bat. Everything you change on the page is kept in
-  synth/settings.json when you press Save (or Ctrl+S); TouchDesigner writes it.
+  The engine serves this page at http://127.0.0.1:8765/synth/ and opens it in
+  Chrome when `python -m engine` starts (engine/synth.py). The page connects
+  back as a listener and hears:
 
-  What TouchDesigner can send (JSON, OSC-style addresses):
+    {"event": "state", "state": "generating"}                  the moment it changes
+    {"event": "synth_inputs", "inputs": {"mic_level": 0.02,    15 times a second
+       "speech_active": 0, "present": 1, "visit": 1}}
 
-    {"inputs": {"distance": 0.42, "level": 0.1}}        named inputs, routed on the page
-    {"address": "/in/distance", "value": 0.42}          the same, one at a time
-    {"address": "/scene", "value": "generating"}        the Oracle's state
-    {"address": "/layer/1/density", "value": 6, "glide": 3}   set a parameter directly
-    {"set": {"/master/gain": 0.4}, "glide": 2}
-
-  Inputs are the intended way in: TouchDesigner says what is happening, the page
-  decides what that does to the sound, and you can change that without code.
+  plus any numbers TouchDesigner relays through the engine as `synth_inputs`.
+  States pick scenes; inputs move parameters through Routes. Both are edited
+  here and kept in synth/settings.json when you press Save (or Ctrl+S).
 -->
 <style>
   :root {
@@ -116,7 +113,7 @@
       <span id="dirty">Saved</span>
     </div>
     <div class="status">
-      <span>TouchDesigner <b id="ws">connecting</b></span>
+      <span>Engine <b id="ws">connecting</b></span>
       <span>Audio <b id="ac">stopped</b></span>
       <span>Playing <b id="scene">idle</b></span>
       <span>Oracle state <b id="state">none yet</b></span>
@@ -127,21 +124,22 @@
       <label>Output <select id="sink"><option value="">System default</option></select></label>
       <button id="save" disabled title="Ctrl+S">Save</button>
       <button id="revert">Revert to saved</button>
+      <button id="builtin" title="Replace everything on this page with the sound it ships with">Use the built-in sound</button>
       <button id="start" hidden>Start sound</button>
     </div>
   </header>
 
   <div class="cols">
     <section>
-      <h2>From TouchDesigner</h2>
-      <p class="hint">Everything TouchDesigner has sent since this page opened. Press Route to make a number move a parameter.</p>
-      <label><input type="checkbox" id="follow" checked> Follow the Oracle's state</label>
+      <h2>From the Oracle</h2>
+      <p class="hint">What the engine is telling the soundscape: its state, the microphone, whether someone is at the stand, and anything TouchDesigner relays. Press Route to make a number move a parameter.</p>
+      <label><input type="checkbox" id="follow" checked> Change scene with the Oracle's state</label>
       <p class="hint" style="margin-top:4px">Turn this off while tuning, so clicking a scene plays it and the Oracle does not switch it away.</p>
       <table>
         <thead><tr><th>Input</th><th>Value</th><th></th><th>Seen range</th><th>Per second</th><th></th></tr></thead>
         <tbody id="inputs"></tbody>
       </table>
-      <p class="hint" id="noinputs" style="margin-top:10px">Nothing yet. In TouchDesigner: <code>mod(op('synth_callbacks')).input('distance', 0.4)</code></p>
+      <p class="hint" id="noinputs" style="margin-top:10px">Nothing yet. Is the engine running? This page expects to be opened by <code>python -m engine</code>.</p>
     </section>
 
     <section>
@@ -194,7 +192,10 @@ function log(t) { const l = $('log'); l.textContent = `${new Date().toLocaleTime
 
 // ── configuration ──────────────────────────────────────────────────────────
 const Q = new URLSearchParams(location.search);
-const WS_URL = Q.get('ws') || `ws://${location.host || 'localhost:9980'}/`;
+const WS_URL = Q.get('ws') || `ws://${location.host || '127.0.0.1:8765'}/`;
+const TOKEN = Q.get('token') || '';
+const BASE = '/synth';
+const SETTINGS_VERSION = 3;
 const SINK_HINT = (Q.get('sink') || '').toLowerCase();
 const NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;           // recording names
 const SCENE_RE = /^[A-Za-z0-9_-]{1,32}$/;
@@ -202,7 +203,7 @@ const INPUT_RE = /^[A-Za-z0-9_/.:-]{1,80}$/;
 const TICK_MS = 25, LOOKAHEAD = 0.12, MAX_ACTIVE = 220;
 const ROOT = 73.42;                                  // D2; the generated sounds are tuned to it
 const N_LAYERS = 4;
-const GENERATED = ['drone', 'glass', 'breath'];
+const GENERATED = ['low', 'drone', 'breath', 'glass'];
 const STATES = ['idle', 'listening', 'transcribing', 'generating', 'validating',
                 'synthesizing', 'ready', 'speaking', 'cooldown', 'error'];
 
@@ -244,52 +245,64 @@ const toT = (m, v) => ((clamp(v, m.min, m.max) - m.min) / (m.max - m.min)) ** (1
 const fromT = (m, t) => m.min + (m.max - m.min) * t ** m.k;
 
 // ── default settings (used until synth/settings.json exists) ───────────────
+// The home sound: a low root and a fifth, breathing slowly. Grains are long
+// and overlap by ten or more, so what you hear is a surface, not a texture.
 const IDLE = {
-  '/layer/0/source': 'drone', '/layer/0/scale': 'fifths',
-  '/layer/0/gain': 0.5, '/layer/0/density': 5, '/layer/0/size': 2200,
-  '/layer/0/position': 0.3, '/layer/0/spray': 0.15, '/layer/0/scan': 0.004,
-  '/layer/0/pitch': -12, '/layer/0/spread': 7, '/layer/0/reverse': 0.2,
-  '/layer/0/pan': 0.5, '/layer/0/attack': 0.5,
+  '/layer/0/source': 'low', '/layer/0/scale': 'fifths',
+  '/layer/0/gain': 0.6, '/layer/0/density': 3, '/layer/0/size': 3500,
+  '/layer/0/position': 0.3, '/layer/0/spray': 0.3, '/layer/0/scan': 0.002,
+  '/layer/0/pitch': 0, '/layer/0/spread': 0, '/layer/0/reverse': 0.5,
+  '/layer/0/pan': 0.4, '/layer/0/attack': 0.5,
 
-  '/layer/1/source': 'glass', '/layer/1/scale': 'minpent',
-  '/layer/1/gain': 0.22, '/layer/1/density': 1.5, '/layer/1/size': 900,
-  '/layer/1/position': 0.5, '/layer/1/spray': 0.5, '/layer/1/scan': 0.01,
-  '/layer/1/pitch': 12, '/layer/1/spread': 14, '/layer/1/reverse': 0.5,
-  '/layer/1/pan': 0.9, '/layer/1/attack': 0.3,
+  '/layer/1/source': 'drone', '/layer/1/scale': 'fifths',
+  '/layer/1/gain': 0.2, '/layer/1/density': 2.5, '/layer/1/size': 3000,
+  '/layer/1/position': 0.5, '/layer/1/spray': 0.4, '/layer/1/scan': 0.003,
+  '/layer/1/pitch': 7, '/layer/1/spread': 5, '/layer/1/reverse': 0.5,
+  '/layer/1/pan': 0.7, '/layer/1/attack': 0.5,
 
   '/layer/2/source': 'breath', '/layer/2/scale': 'none',
-  '/layer/2/gain': 0.18, '/layer/2/density': 8, '/layer/2/size': 500,
-  '/layer/2/position': 0.5, '/layer/2/spray': 0.4, '/layer/2/scan': 0.02,
-  '/layer/2/pitch': 0, '/layer/2/spread': 4, '/layer/2/reverse': 0.3,
+  '/layer/2/gain': 0.07, '/layer/2/density': 4, '/layer/2/size': 1200,
+  '/layer/2/position': 0.5, '/layer/2/spray': 0.5, '/layer/2/scan': 0.01,
+  '/layer/2/pitch': -7, '/layer/2/spread': 2, '/layer/2/reverse': 0.5,
   '/layer/2/pan': 1, '/layer/2/attack': 0.5,
 
   '/layer/3/source': 'voice', '/layer/3/scale': 'none',
-  '/layer/3/gain': 0, '/layer/3/density': 6, '/layer/3/size': 350,
-  '/layer/3/position': 0.2, '/layer/3/spray': 0.05, '/layer/3/scan': 0.003,
-  '/layer/3/pitch': -5, '/layer/3/spread': 2, '/layer/3/reverse': 0.6,
+  '/layer/3/gain': 0, '/layer/3/density': 4, '/layer/3/size': 500,
+  '/layer/3/position': 0.2, '/layer/3/spray': 0.05, '/layer/3/scan': 0.002,
+  '/layer/3/pitch': -7, '/layer/3/spread': 1, '/layer/3/reverse': 0.7,
   '/layer/3/pan': 1, '/layer/3/attack': 0.5,
 
-  '/master/gain': 0.8, '/master/cutoff': 5000, '/master/reverb': 0.55,
-  '/master/delay': 0.2, '/master/feedback': 0.45, '/master/delaytime': 0.75,
+  '/master/gain': 0.75, '/master/cutoff': 2600, '/master/reverb': 0.6,
+  '/master/delay': 0.06, '/master/feedback': 0.3, '/master/delaytime': 1.2,
 };
 
 const DEFAULT_SETTINGS = {
-  version: 2,
-  layerNames: ['Drone', 'Glass', 'Air', 'Whispers'],
+  version: SETTINGS_VERSION,
+  layerNames: ['Ground', 'Fifth', 'Air', 'Whispers'],
   scenes: {
-    idle:      { glide: 6,   values: IDLE },
-    listening: { glide: 1.5, values: { '/master/gain': 0.45, '/master/cutoff': 2500,
-                                       '/layer/1/gain': 0.08, '/layer/2/gain': 0.1 } },
-    thinking:  { glide: 3,   values: { '/layer/0/scan': 0.012, '/layer/1/density': 5, '/layer/1/gain': 0.3,
-                                       '/layer/3/gain': 0.12, '/master/cutoff': 7500, '/master/reverb': 0.65 } },
-    speaking:  { glide: 1.2, values: { '/master/gain': 0.4, '/master/cutoff': 1800,
-                                       '/layer/1/gain': 0.06, '/layer/3/gain': 0 } },
-    cooldown:  { glide: 8,   values: {} },
+    idle:      { glide: 8,   values: IDLE },
+    // The visitor is speaking: step back, so Whisper hears them and not us.
+    listening: { glide: 2,   values: { '/master/gain': 0.5, '/master/cutoff': 1800,
+                                       '/layer/1/gain': 0.12, '/layer/2/gain': 0.04 } },
+    // The Oracle is thinking: the fifth widens and the whispers come in, barely.
+    thinking:  { glide: 4,   values: { '/layer/0/scan': 0.005, '/layer/1/gain': 0.3, '/layer/1/spread': 7,
+                                       '/layer/3/gain': 0.07, '/master/cutoff': 3200, '/master/reverb': 0.7 } },
+    // The Oracle is speaking: low and dark underneath the voice.
+    speaking:  { glide: 1.5, values: { '/master/gain': 0.42, '/master/cutoff': 1500,
+                                       '/layer/1/gain': 0.12, '/layer/3/gain': 0 } },
+    cooldown:  { glide: 10,  values: {} },
   },
   stateMap: { idle: 'idle', listening: 'listening', transcribing: 'thinking', generating: 'thinking',
               validating: 'thinking', synthesizing: 'thinking', ready: 'thinking', speaking: 'speaking',
               cooldown: 'cooldown', error: 'idle' },
-  routes: [],
+  // Two things the room does by itself, both editable under Routes:
+  // someone at the stand warms the fifth, and a visitor's voice ducks everything.
+  routes: [
+    { on: true, input: '/in/present', target: '/layer/1/gain', mode: 'add',
+      inMin: 0, inMax: 1, outMin: 0, outMax: 0.08, smooth: 5 },
+    { on: true, input: '/in/speech_active', target: '/master/gain', mode: 'add',
+      inMin: 0, inMax: 1, outMin: 0, outMax: -0.15, smooth: 0.8 },
+  ],
   sinkLabel: '',
 };
 
@@ -409,7 +422,7 @@ function computeEffective(dt) {
 }
 const routedTargets = () => new Set(S.routes.filter(r => r.on && r.input).map(r => r.target));
 
-// ── inputs from TouchDesigner ──────────────────────────────────────────────
+// ── inputs from the engine ─────────────────────────────────────────────────
 const inputs = new Map();     // address -> { v, lo, hi, count, prev, rate, t, kind }
 let inputsVersion = 0;
 function noteInput(name, v, kind) {
@@ -460,6 +473,7 @@ function buildGraph() {
     const bus = ctx.createGain(); bus.gain.value = 0; bus.connect(mix);
     layers.push({ i, bus, next: 0, drift: 0 });
   }
+  addBuffer('low', makeLow(16));
   addBuffer('drone', makeDrone(12));
   addBuffer('glass', makeGlass(10));
   addBuffer('breath', makeBreath(10));
@@ -492,6 +506,24 @@ function makeDrone(seconds) {
       for (let i = 0; i < n; i++) {
         const t = i / sr;
         d[i] += amp * (0.6 + 0.4 * Math.sin(6.2832 * lfoF * t + lfoP)) * Math.sin(6.2832 * f * t + ph);
+      }
+    }
+  }
+  return normalize(b);
+}
+
+// The ground: few, low partials and very slow beating. Nothing bright to tire of.
+function makeLow(seconds) {
+  const sr = ctx.sampleRate, n = sr * seconds, b = ctx.createBuffer(2, n, sr);
+  const partials = [[0.5, .35], [1, 1], [1.5, .22], [2, .3], [3, .08]];
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    for (const [ratio, amp] of partials) {
+      const f = ROOT * ratio + (c ? 0.07 : -0.07);
+      const lfoF = 0.015 + Math.random() * 0.04, lfoP = Math.random() * 6.28, ph = Math.random() * 6.28;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        d[i] += amp * (0.7 + 0.3 * Math.sin(6.2832 * lfoF * t + lfoP)) * Math.sin(6.2832 * f * t + ph);
       }
     }
   }
@@ -656,9 +688,9 @@ ticker.onmessage = tick;
 let grainFiles = [];
 async function refreshFiles() {
   try {
-    const r = await fetch('/grains.json', { cache: 'no-store' });
+    const r = await fetch(`${BASE}/grains.json`, { cache: 'no-store' });
     if (r.ok) { const list = await r.json(); grainFiles = Array.isArray(list) ? list.filter(n => NAME_RE.test(n)) : []; }
-  } catch { /* opened without TouchDesigner */ }
+  } catch { /* opened without the engine */ }
   // The whisper layer starts on the first recording if it points at nothing.
   const wa = '/layer/3/source', w = S.scenes.idle.values[wa];
   if (grainFiles.length && !GENERATED.includes(w) && !grainFiles.includes(w)) {
@@ -679,7 +711,7 @@ async function load(name, as) {
   if (!NAME_RE.test(String(name)) || !NAME_RE.test(String(as))) return report('bad_name', String(name).slice(0, 40));
   loading.add(as);
   try {
-    const res = await fetch(`/grains/${name}.wav`, { cache: 'no-store' });
+    const res = await fetch(`${BASE}/grains/${name}.wav`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     addBuffer(as, await ctx.decodeAudioData(await res.arrayBuffer()));
     log(`Loaded ${name}` + (as !== name ? ` as ${as}` : ''));
@@ -691,20 +723,30 @@ async function load(name, as) {
   }
 }
 
-// ── TouchDesigner connection ───────────────────────────────────────────────
+// ── the engine connection ──────────────────────────────────────────────────
 let ws, retry = 500;
 function connect() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => {
     retry = 500; wsStatus(true);
-    sendTD({ event: 'hello', protocol_version: 2, sample_rate: ctx.sampleRate, audio: ctx.state });
+    hello();
   };
   ws.onmessage = e => {
     let m;
     try { m = JSON.parse(e.data); } catch { return report('not_json', ''); }
     for (const x of Array.isArray(m) ? m : [m]) handle(x);
   };
-  ws.onclose = () => { wsStatus(false); setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); };
+  ws.onclose = () => { wsStatus(false); setTimeout(connect, retry); retry = duplicate ? 30000 : Math.min(retry * 2, 5000); };
+}
+let dupTimer;
+function hello() {
+  sendTD({ event: 'hello', role: 'synth', token: TOKEN || undefined, sample_rate: ctx.sampleRate });
+  // A page that was told to stay quiet plays again once it is the only one.
+  clearTimeout(dupTimer);
+  dupTimer = setTimeout(() => {
+    if (!duplicate) return;
+    duplicate = false; log('This is the only soundscape page now; playing.'); startAudio();
+  }, 1500);
 }
 function wsStatus(up) {
   const e = $('ws'); e.textContent = up ? 'connected' : 'waiting'; e.className = up ? 'on' : 'bad';
@@ -739,8 +781,24 @@ function incoming(a, v, glide) {
   else report('bad_value', String(a).slice(0, 60));
 }
 
+let duplicate = false;
 function tdEvent(m) {
-  if (m.event === 'saved') {
+  if (m.event === 'state' && typeof m.state === 'string') {
+    noteInput('/state', m.state.slice(0, 40), 'state');
+    oracleState(m.state);
+  } else if (m.event === 'synth_inputs') {
+    handle({ inputs: m.inputs });
+  } else if (m.event === 'ack') {
+    hello();                                  // authenticated; now say what we are
+  } else if (m.event === 'synth_duplicate') {
+    clearTimeout(dupTimer);
+    duplicate = true; ctx.suspend();
+    retry = 30000; ws.close();                // ask again in half a minute
+    const e = $('ac'); e.textContent = 'silent, another soundscape page is playing'; e.className = 'bad';
+    log('Another soundscape page is already playing, so this one stays silent and checks again every 30 s.');
+  } else if (m.event === 'rejected') {
+    log(`The engine refused ${m.code} ${m.detail || ''}`);
+  } else if (m.event === 'saved') {
     if (savingAt === edits) { dirty = false; }
     savingAt = -1; updateDirty(); log('Saved to synth/settings.json');
   } else if (m.event === 'save_failed') {
@@ -754,9 +812,18 @@ function report(code, detail) { log(`${code} ${detail}`); sendTD({ event: 'error
 // ── settings: load, save, revert ───────────────────────────────────────────
 async function loadSettings() {
   try {
-    const r = await fetch('/settings.json', { cache: 'no-store' });
-    if (r.ok) { log('Settings loaded from synth/settings.json'); return sanitize(await r.json()); }
-  } catch { /* first run, or no TouchDesigner */ }
+    const r = await fetch(`${BASE}/settings.json`, { cache: 'no-store' });
+    if (r.ok) {
+      const raw = await r.json();
+      if (raw && raw.version === SETTINGS_VERSION) { log('Settings loaded from synth/settings.json'); return sanitize(raw); }
+      // Saved by an older page, tuned for a sound that no longer exists.
+      log('synth/settings.json is from an older version. Playing the built-in sound; Save to replace the file.');
+      const s = structuredClone(DEFAULT_SETTINGS);
+      if (raw && typeof raw.sinkLabel === 'string') s.sinkLabel = raw.sinkLabel.slice(0, 200);
+      setTimeout(touch, 0);
+      return s;
+    }
+  } catch { /* first run, or no engine */ }
   log('Using the built-in settings. Press Save to create synth/settings.json.');
   return structuredClone(DEFAULT_SETTINGS);
 }
@@ -767,13 +834,13 @@ function updateDirty() {
   $('save').disabled = !dirty || !up || savingAt >= 0;
   $('save').textContent = savingAt >= 0 ? 'Saving' : 'Save';
   const d = $('dirty');
-  d.textContent = dirty ? (up ? 'Unsaved changes' : 'Unsaved changes, TouchDesigner not connected') : 'Saved';
+  d.textContent = dirty ? (up ? 'Unsaved changes' : 'Unsaved changes, engine not connected') : 'Saved';
   d.className = dirty ? 'bad' : '';
 }
 function save() {
   if (!dirty || !ws || ws.readyState !== 1) return;
   savingAt = edits;
-  sendTD({ event: 'save_settings', settings: S });
+  sendTD({ event: 'synth_save', settings: S });
   updateDirty();
 }
 async function revert() {
@@ -921,8 +988,8 @@ let routeLive = [], routeInputSelects = [], routesInputsVersion = -1;
 function targetGroups() {
   const g = [];
   for (let i = 0; i < N_LAYERS; i++)
-    g.push([S.layerNames[i], Object.keys(LAYER_META).map(k => [`/layer/${i}/${k}`, LAYER_META[k].label])]);
-  g.push(['Whole room', Object.keys(MASTER_META).map(k => [`/master/${k}`, MASTER_META[k].label])]);
+    g.push([S.layerNames[i], Object.keys(LAYER_META).map(k => [`/layer/${i}/${k}`, `${S.layerNames[i]}, ${LAYER_META[k].label.toLowerCase()}`])]);
+  g.push(['Whole room', Object.keys(MASTER_META).map(k => [`/master/${k}`, `Whole room, ${MASTER_META[k].label.toLowerCase()}`])]);
   return g;
 }
 function inputGroups(current) {
@@ -1084,6 +1151,7 @@ async function listOutputs() {
 
 // ── page wiring ────────────────────────────────────────────────────────────
 async function startAudio() {
+  if (duplicate) return;
   await ctx.resume();
   const running = ctx.state === 'running', e = $('ac');
   e.textContent = running ? 'running' : 'blocked, press Start sound'; e.className = running ? 'on' : 'bad';
@@ -1122,6 +1190,14 @@ $('delscene').onclick = () => {
 $('addroute').onclick = () => newRoute(numericInputs()[0] || '');
 $('save').onclick = save;
 $('revert').onclick = revert;
+$('builtin').onclick = () => {
+  const keep = S.sinkLabel;
+  S = structuredClone(DEFAULT_SETTINGS); S.sinkLabel = keep;
+  editScene = 'idle';
+  playScene(S.scenes[activeScene] ? activeScene : 'idle', 3);
+  renderAll(); refreshFiles(); touch();
+  log('Built-in sound loaded. Save to keep it, or Revert to go back.');
+};
 $('start').onclick = startAudio;
 addEventListener('pointerdown', startAudio);
 addEventListener('keydown', e => {

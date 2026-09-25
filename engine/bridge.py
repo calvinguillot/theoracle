@@ -18,6 +18,11 @@ string.
 **A state snapshot on connect, never a replay.** TouchDesigner restarts more
 often than the engine does. When it comes back it needs to know where things
 stand, not to receive the commands it missed.
+
+Three kinds of client share the port. TouchDesigner drives the piece. The
+dashboard (`role: monitor`) only watches. The soundscape page (`role: synth`,
+see synth.py) hears the state and a few live numbers, may save its own
+settings, and never receives a word of what was said.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine import dashboard           # noqa: E402
+from engine import synth               # noqa: E402
 from engine.config import load          # noqa: E402
 
 PROTOCOL_VERSION = 1
@@ -42,9 +48,15 @@ STATES = ("idle", "listening", "transcribing", "generating", "validating",
 # Anything else is rejected rather than ignored, so a typo in the TD patch
 # shows up as a message in the textport instead of as silence.
 FROM_TD = ("hello", "presence", "listen_start", "listen_stop", "cancel",
-           "playback_started", "playback_finished", "playback_error", "mute")
+           "playback_started", "playback_finished", "playback_error", "mute",
+           "synth_inputs")
 
 MAX_PAYLOAD = 4096          # nothing TD sends is near this
+MAX_SYNTH_PAYLOAD = 600 * 1024     # the soundscape's settings, when it saves them
+
+# The only events a soundscape page is sent. Not response_ready or transcript:
+# the sound has no use for what anyone said, so it never has it.
+SYNTH_EVENTS = ("state",)
 
 
 @dataclass
@@ -56,6 +68,7 @@ class Bridge:
     state: str = "idle"
     clients: set = field(default_factory=set)     # TouchDesigner
     monitors: set = field(default_factory=set)    # dashboard pages
+    synths: set = field(default_factory=set)      # the soundscape page
     _authed: set = field(default_factory=set)
     _osc: object = None
     on_event: object = None            # async callable(event: str, msg: dict)
@@ -84,13 +97,27 @@ class Bridge:
         payload = {"protocol_version": PROTOCOL_VERSION, "event": event}
         payload.update(fields)
         message = json.dumps(payload, ensure_ascii=False)
-        for ws in list(self.clients) + list(self.monitors):
+        targets = list(self.clients) + list(self.monitors)
+        if event in SYNTH_EVENTS:
+            targets += list(self.synths)
+        for ws in targets:
             try:
                 await ws.send(message)
             except Exception:
                 self.clients.discard(ws)
                 self.monitors.discard(ws)
+                self.synths.discard(ws)
                 self._authed.discard(ws)
+
+    async def send_synths(self, payload: dict) -> None:
+        """To the soundscape page only: its live numbers, and replies to it."""
+        payload.setdefault("protocol_version", PROTOCOL_VERSION)
+        message = json.dumps(payload)
+        for ws in list(self.synths):
+            try:
+                await ws.send(message)
+            except Exception:
+                self.synths.discard(ws)
 
     async def set_state(self, state: str, **fields) -> None:
         if state not in STATES:
@@ -119,7 +146,7 @@ class Bridge:
                                   "event": "state", "state": self.state}))
         try:
             async for raw in ws:
-                if len(raw) > MAX_PAYLOAD:
+                if len(raw) > (MAX_SYNTH_PAYLOAD if ws in self.synths else MAX_PAYLOAD):
                     await self._reject(ws, "oversized", f"{len(raw)} bytes")
                     continue
                 try:
@@ -141,6 +168,27 @@ class Bridge:
                              "of": "hello"}))
                     else:
                         await self._reject(ws, "unauthenticated", event)
+                    continue
+
+                if event == "hello" and msg.get("role") == "synth":
+                    self.clients.discard(ws)
+                    self.synths.add(ws)
+                    self.log(f"  soundscape connected ({len(self.synths)} open)")
+                    await self._send_to(ws, {"event": "state", "state": self.state})
+                    if len(self.synths) > 1:
+                        # Two pages would play the room twice. The newcomer goes quiet.
+                        await self._send_to(ws, {"event": "synth_duplicate"})
+                    continue
+
+                if ws in self.synths:
+                    if event == "synth_save":
+                        problem = synth.save_settings(msg.get("settings"))
+                        await self._send_to(ws, {"event": "saved"} if problem is None
+                                            else {"event": "save_failed", "detail": problem})
+                        self.log("  soundscape settings " + ("saved" if problem is None
+                                                            else f"NOT saved: {problem}"))
+                    elif event != "error":
+                        await self._reject(ws, "synths_may_only_save", event)
                     continue
 
                 if event == "hello":
@@ -166,17 +214,27 @@ class Bridge:
                 if ws not in self.clients:
                     self.clients.add(ws)
                     self.log("  TouchDesigner connected")
+                if event == "synth_inputs":
+                    # Every frame, so relayed without a log line. Numbers only.
+                    raw_inputs = msg.get("inputs")
+                    if isinstance(raw_inputs, dict):
+                        clean = {str(k)[:64]: float(v) for k, v in list(raw_inputs.items())[:32]
+                                 if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                        await self.send_synths({"event": "synth_inputs", "inputs": clean})
+                    continue
                 self.log(f"  ← {event}")
                 if self.on_event is not None:
                     await self.on_event(event, msg)
         except websockets.exceptions.ConnectionClosed:
             pass                       # TouchDesigner closed or was restarted
         finally:
-            was_td = ws in self.clients
+            was_td, was_synth = ws in self.clients, ws in self.synths
             self.clients.discard(ws)
             self.monitors.discard(ws)
+            self.synths.discard(ws)
             self._authed.discard(ws)
-            self.log("  TouchDesigner disconnected" if was_td else "  dashboard closed")
+            self.log("  TouchDesigner disconnected" if was_td
+                     else "  soundscape closed" if was_synth else "  dashboard closed")
 
     async def _send_to(self, ws, payload: dict) -> None:
         payload.setdefault("protocol_version", PROTOCOL_VERSION)
@@ -185,6 +243,7 @@ class Bridge:
         except Exception:
             self.clients.discard(ws)
             self.monitors.discard(ws)
+            self.synths.discard(ws)
 
     async def _reject(self, ws, code: str, detail: str) -> None:
         self.log(f"  rejected: {code} {detail}")
@@ -205,6 +264,7 @@ class Bridge:
             self.log(f"  websocket on ws://{self.host}:{self.port} "
                      f"(no token — set bridge.ws_token to require one)")
         self.log(f"  dashboard at http://{self.host}:{self.port}")
+        self.log(f"  soundscape at http://{self.host}:{self.port}/synth/")
         # ping_interval=None: TD does not answer pings. See the module docstring.
         # process_request turns a plain GET on the same port into the dashboard,
         # so there is one port to remember and one thing to start.
@@ -226,13 +286,13 @@ class Bridge:
         """
         try:
             if len(args) == 2 and hasattr(args[1], "get"):        # legacy
-                _path, headers_in = args
+                path, headers_in = args
                 if headers_in.get("Upgrade", "").lower() == "websocket":
                     return None
                 import http
-                body = dashboard.page_bytes()
-                return (http.HTTPStatus.OK,
-                        [("Content-Type", "text/html; charset=utf-8"),
+                status, ctype, body = self._page_for(path)
+                return (http.HTTPStatus(status),
+                        [("Content-Type", ctype),
                          ("Content-Length", str(len(body))),
                          ("Cache-Control", "no-store")],
                         body)
@@ -242,15 +302,23 @@ class Bridge:
                 return None
             from websockets.datastructures import Headers
             from websockets.http11 import Response
-            body = dashboard.page_bytes()
-            return Response(200, "OK", Headers([
-                ("Content-Type", "text/html; charset=utf-8"),
+            status, ctype, body = self._page_for(request.path)
+            return Response(status, "OK" if status == 200 else "Not Found", Headers([
+                ("Content-Type", ctype),
                 ("Content-Length", str(len(body))),
                 ("Cache-Control", "no-store"),
             ]), body)
         except Exception as e:                                    # noqa: BLE001
             self.log(f"  dashboard could not be served: {type(e).__name__}: {e}")
             return None
+
+    @staticmethod
+    def _page_for(path: str):
+        """/synth/... is the soundscape; everything else is the dashboard."""
+        found = synth.route(path or "/")
+        if found is not None:
+            return found
+        return 200, "text/html; charset=utf-8", dashboard.page_bytes()
 
 
 async def meter(bridge: Bridge, mic, hz: int = 30) -> None:

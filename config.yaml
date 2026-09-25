@@ -105,3 +105,9 @@ logging:
   history_dir: history               # sanitised summaries, kept
   sanitize_on_end: true              # MUST stay true in an exhibition
   keep_raw_sessions: false           # true only while debugging, never in a show
+
+
+synth:
+  enabled: true
+  output: "CQ"        # part of the output device's name
+  window: normal      # or minimized, once it's tuned
