@@ -12,3 +12,7 @@
 {"session": "a714e59e66334aad90055a8a9a9fa52c", "at": "2026-09-24T23:16:23+00:00", "seconds": 86.5, "turns": 3, "languages": ["en"], "blocked": 0, "rejected": 3, "errors": []}
 {"session": "f0806042ed3b4d52abdabd0b966f584c", "at": "2026-09-25T06:11:50+00:00", "seconds": 100.7, "turns": 4, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}
 {"session": "dc6016c37b0c49b598ca608508e748c6", "at": "2026-09-25T06:30:22+00:00", "seconds": 65.7, "turns": 3, "languages": ["fi", "en"], "blocked": 0, "rejected": 2, "errors": []}
+{"session": "985bc1baad634868954f137a2eaf960a", "at": "2026-09-25T07:12:48+00:00", "seconds": 55.0, "turns": 3, "languages": ["fi", "es"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "90a9434581034e64a4f7421e8b5af88d", "at": "2026-09-25T07:13:56+00:00", "seconds": 37.7, "turns": 3, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "a049cbda36aa4a96b42f85c5e578b782", "at": "2026-09-25T07:34:01+00:00", "seconds": 23.7, "turns": 2, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}
+{"session": "e73073b26bbf4c3abd431c7f242194b8", "at": "2026-09-25T07:38:33+00:00", "seconds": 11.2, "turns": 1, "languages": ["en"], "blocked": 0, "rejected": 0, "errors": []}

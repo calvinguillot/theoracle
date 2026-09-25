@@ -195,7 +195,7 @@ const Q = new URLSearchParams(location.search);
 const WS_URL = Q.get('ws') || `ws://${location.host || '127.0.0.1:8765'}/`;
 const TOKEN = Q.get('token') || '';
 const BASE = '/synth';
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
 const SINK_HINT = (Q.get('sink') || '').toLowerCase();
 const NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;           // recording names
 const SCENE_RE = /^[A-Za-z0-9_-]{1,32}$/;
@@ -279,22 +279,66 @@ const IDLE = {
 const DEFAULT_SETTINGS = {
   version: SETTINGS_VERSION,
   layerNames: ['Ground', 'Fifth', 'Air', 'Whispers'],
+  // One scene per state, so every change in the engine is heard. They are all
+  // small moves away from idle, and they form an arc: the room holds its breath
+  // while the visitor speaks, stirs while the Oracle thinks, and settles
+  // underneath the voice. Glide is how long the move into each scene takes.
   scenes: {
-    idle:      { glide: 8,   values: IDLE },
-    // The visitor is speaking: step back, so Whisper hears them and not us.
-    listening: { glide: 2,   values: { '/master/gain': 0.5, '/master/cutoff': 1800,
-                                       '/layer/1/gain': 0.12, '/layer/2/gain': 0.04 } },
-    // The Oracle is thinking: the fifth widens and the whispers come in, barely.
-    thinking:  { glide: 4,   values: { '/layer/0/scan': 0.005, '/layer/1/gain': 0.3, '/layer/1/spread': 7,
-                                       '/layer/3/gain': 0.07, '/master/cutoff': 3200, '/master/reverb': 0.7 } },
-    // The Oracle is speaking: low and dark underneath the voice.
-    speaking:  { glide: 1.5, values: { '/master/gain': 0.42, '/master/cutoff': 1500,
-                                       '/layer/1/gain': 0.12, '/layer/3/gain': 0 } },
-    cooldown:  { glide: 10,  values: {} },
+    idle:         { glide: 8,   values: IDLE },
+
+    // The visitor speaks: everything stills and steps back, so Whisper hears them.
+    listening:    { glide: 2,   values: { '/master/gain': 0.5, '/master/cutoff': 1800,
+                                          '/layer/0/density': 2, '/layer/0/scan': 0.001,
+                                          '/layer/1/gain': 0.1, '/layer/2/gain': 0.03 } },
+
+    // The first stir: the fifth lifts and the air returns.
+    transcribing: { glide: 1.5, values: { '/master/gain': 0.62, '/master/cutoff': 2400,
+                                          '/layer/1/gain': 0.24, '/layer/2/gain': 0.08,
+                                          '/layer/3/gain': 0.03 } },
+
+    // Thinking, the most active the room gets: the fifth moves between root,
+    // fifth and octave, the ground drifts, the whispers come in, the echo opens.
+    generating:   { glide: 3,   values: { '/master/gain': 0.72, '/master/cutoff': 3400,
+                                          '/master/reverb': 0.7, '/master/delay': 0.12, '/master/feedback': 0.4,
+                                          '/layer/0/scan': 0.006, '/layer/0/spray': 0.45,
+                                          '/layer/1/gain': 0.3, '/layer/1/density': 4, '/layer/1/size': 2200,
+                                          '/layer/1/spread': 12,
+                                          '/layer/2/gain': 0.1, '/layer/2/scan': 0.03,
+                                          '/layer/3/gain': 0.08, '/layer/3/density': 5 } },
+
+    // The answer is being checked: still thinking, a shade quieter.
+    validating:   { glide: 2,   values: { '/master/gain': 0.7, '/master/cutoff': 3000,
+                                          '/master/reverb': 0.7, '/master/delay': 0.1, '/master/feedback': 0.35,
+                                          '/layer/0/scan': 0.005, '/layer/1/gain': 0.28, '/layer/1/density': 3.5,
+                                          '/layer/1/spread': 12, '/layer/2/gain': 0.09, '/layer/3/gain': 0.05 } },
+
+    // The voice is being made: the movement slows and the whispers fade.
+    synthesizing: { glide: 2,   values: { '/master/gain': 0.62, '/master/cutoff': 2600,
+                                          '/master/delay': 0.08, '/layer/1/gain': 0.22, '/layer/1/density': 3,
+                                          '/layer/1/spread': 7, '/layer/3/gain': 0.03 } },
+
+    // A breath before the Oracle speaks.
+    ready:        { glide: 1,   values: { '/master/gain': 0.5, '/master/cutoff': 2000,
+                                          '/layer/1/gain': 0.15, '/layer/3/gain': 0 } },
+
+    // The Oracle speaks: calmer than idle. Only the ground and a still fifth,
+    // darker, no echo, nothing moving that could compete with the voice.
+    speaking:     { glide: 1.5, values: { '/master/gain': 0.45, '/master/cutoff': 1400,
+                                          '/master/reverb': 0.55, '/master/delay': 0,
+                                          '/layer/0/density': 2.5, '/layer/0/size': 4000,
+                                          '/layer/0/scan': 0.001, '/layer/0/spray': 0.15,
+                                          '/layer/1/gain': 0.1, '/layer/1/density': 1.5, '/layer/1/spread': 0,
+                                          '/layer/2/gain': 0.03, '/layer/3/gain': 0 } },
+
+    // After the voice: a longer tail, then idle returns on its own slow fade.
+    cooldown:     { glide: 3,   values: { '/master/gain': 0.65, '/master/cutoff': 2200,
+                                          '/master/reverb': 0.72, '/layer/1/gain': 0.16 } },
+
+    // Something failed: the room withdraws to the ground alone, quietly.
+    error:        { glide: 4,   values: { '/master/gain': 0.5, '/master/cutoff': 1600,
+                                          '/layer/1/gain': 0, '/layer/2/gain': 0.04, '/layer/3/gain': 0 } },
   },
-  stateMap: { idle: 'idle', listening: 'listening', transcribing: 'thinking', generating: 'thinking',
-              validating: 'thinking', synthesizing: 'thinking', ready: 'thinking', speaking: 'speaking',
-              cooldown: 'cooldown', error: 'idle' },
+  stateMap: Object.fromEntries(STATES.map(st => [st, st])),
   // Two things the room does by itself, both editable under Routes:
   // someone at the stand warms the fifth, and a visitor's voice ducks everything.
   routes: [
@@ -816,6 +860,19 @@ async function loadSettings() {
     if (r.ok) {
       const raw = await r.json();
       if (raw && raw.version === SETTINGS_VERSION) { log('Settings loaded from synth/settings.json'); return sanitize(raw); }
+      if (raw && raw.version === 3) {
+        // Version 3 had one "thinking" scene for five states. Keep everything
+        // that was tuned (idle, routes, names, output, any scene you added)
+        // and bring in a scene for every state.
+        const old = sanitize(raw), s = structuredClone(DEFAULT_SETTINGS);
+        s.scenes.idle = old.scenes.idle;
+        for (const [name, sc] of Object.entries(old.scenes))
+          if (!(name in s.scenes) && name !== 'thinking') s.scenes[name] = sc;
+        Object.assign(s, { routes: old.routes, layerNames: old.layerNames, sinkLabel: old.sinkLabel });
+        log('Kept your idle sound and routes, and added a scene for every state. Save to keep this.');
+        setTimeout(touch, 0);
+        return s;
+      }
       // Saved by an older page, tuned for a sound that no longer exists.
       log('synth/settings.json is from an older version. Playing the built-in sound; Save to replace the file.');
       const s = structuredClone(DEFAULT_SETTINGS);
